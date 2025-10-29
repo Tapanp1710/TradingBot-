@@ -1,88 +1,114 @@
 """
-Loss Streak Detector v1.0
-Detects consecutive losses and triggers cooldown
+Loss Streak Detector v2.0 - FULLY FIXED
+Prevents trading after consecutive losses with proper method names
 """
 import logging
 from datetime import datetime, timedelta
 
-logger = logging.getLogger("StreakDetector")
+logger = logging.getLogger("TradingBot")
+
 
 class StreakDetector:
+    """Track consecutive losses and enforce cooldowns"""
+
     def __init__(self, config):
         self.config = config
-        self.recent_trades = []
-        self.pause_until = None
-        
-    def add_trade(self, pnl):
-        """Record a completed trade"""
-        self.recent_trades.append({
-            'pnl': pnl,
-            'time': datetime.now(),
-            'is_loss': pnl < 0
-        })
-        
-        # Keep only last 10 trades
-        if len(self.recent_trades) > 10:
-            self.recent_trades = self.recent_trades[-10:]
-    
-    def check_streak(self):
-        """Check for losing streaks"""
-        if not self.config.ENABLE_STREAK_DETECTION:
-            return True, "Streak detection disabled"
-        
-        # Check if we're in cooldown
-        if self.pause_until:
-            if datetime.now() < self.pause_until:
-                remaining = (self.pause_until - datetime.now()).total_seconds() / 3600
-                return False, f"In cooldown for {remaining:.1f} more hours"
+        self.consecutive_losses = 0
+        self.last_loss_time = None
+        self.cooldown_until = None
+        self.recent_losses_by_symbol = {}  # Track losses per symbol
+
+        # Configuration
+        self.max_consecutive_losses = getattr(config, 'MAX_CONSECUTIVE_LOSSES', 3)
+        self.cooldown_hours = getattr(config, 'COOLDOWN_AFTER_LOSSES_HOURS', 2)
+        self.prevent_revenge_trading = getattr(config, 'PREVENT_REVENGE_TRADING', True)
+        self.revenge_cooldown_mins = getattr(config, 'REVENGE_TRADE_COOLDOWN_MINS', 30)
+
+        logger.info(f"Streak Detector initialized: max_losses={self.max_consecutive_losses}, cooldown={self.cooldown_hours}h")
+
+    def record_trade(self, symbol: str, profit: float):
+        """
+        Record trade result
+        Args:
+            symbol: Trading symbol
+            profit: Net P&L (positive = profit, negative = loss)
+        """
+        if profit < 0:
+            # Loss recorded
+            self.consecutive_losses += 1
+            self.last_loss_time = datetime.now()
+
+            # Calculate cooldown
+            if self.consecutive_losses >= self.max_consecutive_losses:
+                self.cooldown_until = datetime.now() + timedelta(hours=self.cooldown_hours)
+                logger.warning(f"Loss streak detected! {self.consecutive_losses} consecutive losses")
+                logger.warning(f"Trading paused until {self.cooldown_until.strftime('%H:%M:%S')}")
+
+            # Track per-symbol losses for revenge trading prevention
+            if self.prevent_revenge_trading:
+                self.recent_losses_by_symbol[symbol] = datetime.now()
+        else:
+            # Profit - reset streak
+            if self.consecutive_losses > 0:
+                logger.info(f"Winning trade! Streak reset (was {self.consecutive_losses} losses)")
+            self.consecutive_losses = 0
+            self.cooldown_until = None
+
+    def should_trade(self) -> bool:
+        """
+        Check if trading is allowed globally
+        Returns: True if trading allowed, False if blocked by cooldown
+        """
+        # Check global cooldown
+        if self.cooldown_until:
+            if datetime.now() < self.cooldown_until:
+                return False
             else:
                 # Cooldown expired
-                self.pause_until = None
-                logger.info("✅ Cooldown expired, resuming trading")
-        
-        # Check recent trades for losing streak
-        if len(self.recent_trades) < self.config.MAX_CONSECUTIVE_LOSSES:
-            return True, "Not enough trades to check streak"
-        
-        # Check last N trades
-        last_n = self.recent_trades[-self.config.MAX_CONSECUTIVE_LOSSES:]
-        consecutive_losses = all(t['is_loss'] for t in last_n)
-        
-        if consecutive_losses:
-            # Trigger cooldown
-            self.pause_until = datetime.now() + timedelta(hours=self.config.COOLDOWN_AFTER_LOSSES_HOURS)
-            logger.warning(f"🛑 {self.config.MAX_CONSECUTIVE_LOSSES} consecutive losses detected!")
-            logger.warning(f"⏸️  Cooling down until {self.pause_until.strftime('%H:%M:%S')}")
-            return False, f"Consecutive losses: {self.config.MAX_CONSECUTIVE_LOSSES}"
-        
-        return True, "No losing streak"
-    
-    def get_stats(self):
-        """Get recent performance stats"""
-        if not self.recent_trades:
-            return {
-                'total': 0,
-                'wins': 0,
-                'losses': 0,
-                'win_rate': 0,
-                'streak': 0
-            }
-        
-        wins = sum(1 for t in self.recent_trades if not t['is_loss'])
-        losses = len(self.recent_trades) - wins
-        
-        # Calculate current streak
-        current_streak = 0
-        for trade in reversed(self.recent_trades):
-            if trade['is_loss']:
-                current_streak += 1
+                logger.info("Cooldown period ended - resuming trading")
+                self.cooldown_until = None
+                self.consecutive_losses = 0
+
+        return True
+
+    def can_trade_symbol(self, symbol: str) -> bool:
+        """
+        Check if specific symbol can be traded (revenge trading prevention)
+        Args:
+            symbol: Trading symbol to check
+        Returns: True if symbol can be traded, False if in cooldown
+        """
+        if not self.prevent_revenge_trading:
+            return True
+
+        if symbol in self.recent_losses_by_symbol:
+            time_since_loss = (datetime.now() - self.recent_losses_by_symbol[symbol]).total_seconds() / 60
+
+            if time_since_loss < self.revenge_cooldown_mins:
+                logger.debug(f"Skipping {symbol} - recent loss {time_since_loss:.0f}m ago (cooldown: {self.revenge_cooldown_mins}m)")
+                return False
             else:
-                break
-        
+                # Cooldown expired for this symbol
+                del self.recent_losses_by_symbol[symbol]
+
+        return True
+
+    def get_status(self) -> dict:
+        """
+        Get current streak status
+        Returns: Dict with streak information
+        """
         return {
-            'total': len(self.recent_trades),
-            'wins': wins,
-            'losses': losses,
-            'win_rate': wins / len(self.recent_trades) if self.recent_trades else 0,
-            'current_loss_streak': current_streak
+            'consecutive_losses': self.consecutive_losses,
+            'cooldown_active': self.cooldown_until is not None,
+            'cooldown_until': self.cooldown_until,
+            'symbols_in_cooldown': list(self.recent_losses_by_symbol.keys())
         }
+
+    def reset(self):
+        """Reset all streak data"""
+        self.consecutive_losses = 0
+        self.last_loss_time = None
+        self.cooldown_until = None
+        self.recent_losses_by_symbol.clear()
+        logger.info("Streak detector reset")
