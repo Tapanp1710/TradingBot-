@@ -1,10 +1,11 @@
 """
-Trading Bot Entry Point v5.0 - PRODUCTION READY + FIXED
-October 29, 2025 - All Critical Fixes Applied
+Trading Bot Entry Point v6.0 - DYNAMIC CONFIG EDITION
+November 4, 2025 - Integrated with DynamicConfig
+- Dynamic capital-based configuration
 - Fixed Ctrl+C shutdown (non-blocking input listener)
-- Fixed daemon warning
 - Enhanced error handling, graceful shutdown
 - Performance monitoring and reporting
+- Real-time parameter adjustment
 """
 import sys
 import os
@@ -13,20 +14,26 @@ import time
 import signal
 from datetime import datetime
 
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from config import Config
+from dynamic_config import DynamicConfig
 from utils import setup_logger
 from core import TradingBot
 
+
 # Version tracking
-BOT_VERSION = "5.0.0"
-BOT_BUILD_DATE = "2025-10-29"
-CONFIG_VERSION = Config.CONFIG_VERSION if hasattr(Config, 'CONFIG_VERSION') else "5.0"
+BOT_VERSION = "6.0.0"
+BOT_BUILD_DATE = "2025-11-04"
+CONFIG_VERSION = "6.0-DYNAMIC"
+
 
 # Global shutdown flag
 shutdown_requested = False
+
+# Initialize dynamic config - CHANGE THIS TO YOUR ACTUAL CAPITAL
+Config = DynamicConfig(starting_capital=1000)
+
 
 
 def validate_ml_models():
@@ -74,29 +81,32 @@ def validate_ml_models():
     return True, f"Found {len(models_found)} models", best_model
 
 
+
 def display_startup_banner():
     """Display startup banner with version info"""
     print(f"""
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║                                                                          ║
-║      🤖 AI CRYPTO TRADING BOT v{BOT_VERSION} - PRODUCTION READY 🚀           ║
+║      🤖 AI CRYPTO TRADING BOT v{BOT_VERSION} - DYNAMIC CONFIG 🚀                ║
 ║                                                                          ║
-║  ✅ Real-time Market Data (Binance/Coinbase/Kraken)                     ║
-║  ✅ Technical Analysis (60+ Indicators)                                 ║
-║  ✅ Machine Learning (Random Forest, LightGBM, XGBoost)                 ║
-║  ✅ Online Learning (Self-Improving AI)                                 ║
-║  ✅ News Sentiment Analysis (Multi-Source)                              ║
-║  ✅ Emergency Exit System                                               ║
-║  ✅ Advanced Risk Management (Stop Loss, Take Profit, Trailing)         ║
-║  ✅ Performance Monitoring & Reporting                                  ║
-║  ✅ Daily Loss Protection                                               ║
-║  ✅ Revenge Trading Prevention                                          ║
+║  ✅ Real-time Market Data (Binance/Coinbase/Kraken)                      ║
+║  ✅ Technical Analysis (60+ Indicators)                                  ║
+║  ✅ Machine Learning (Random Forest, LightGBM, XGBoost)                  ║
+║  ✅ Online Learning (Self-Improving AI)                                  ║ 
+║  ✅ News Sentiment Analysis (Multi-Source)                               ║ 
+║  ✅ Emergency Exit System                                                ║
+║  ✅ Advanced Risk Management (Stop Loss, Take Profit, Trailing)          ║
+║  ✅ Performance Monitoring & Reporting                                   ║
+║  ✅ Daily Loss Protection                                                ║
+║  ✅ Revenge Trading Prevention                                           ║
+║  ✅ DYNAMIC CAPITAL-BASED CONFIGURATION                                  ║
 ║                                                                          ║
-║  Build: {BOT_BUILD_DATE} | Config: v{CONFIG_VERSION}                                   ║
-║  Status: ALL CRITICAL BUGS FIXED ✅                                      ║
+║  Build: {BOT_BUILD_DATE} | Config: v{CONFIG_VERSION}                                ║        
+║  Status: DYNAMIC CONFIG ENABLED ✅                                       ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
     """)
+
 
 
 def display_ml_status(logger):
@@ -116,6 +126,7 @@ def display_ml_status(logger):
         print(f"📊 Expected Accuracy: ~60% (on confident predictions)")
         print(f"🎯 ML Confidence Threshold: {Config.ML_CONFIDENCE_THRESHOLD*100:.0f}%")
         print(f"⚖️  ML Signal Weight: {Config.ML_SIGNAL_WEIGHT*100:.0f}%")
+        print(f"🔄 ML Status: {'✅ ENABLED' if Config.ML_ENABLED else '❌ DISABLED (Low Capital)'}")
         
         # List available models
         model_dir = 'ml/models'
@@ -136,73 +147,71 @@ def display_ml_status(logger):
     return ml_available
 
 
+
 def display_configuration(logger):
-    """Display bot configuration"""
+    """Display bot configuration - Enhanced for dynamic config"""
     print("\n" + "="*78)
-    print("⚙️  CONFIGURATION")
+    print("⚙️  DYNAMIC CONFIGURATION")
     print("="*78)
     
     # Capital & Trading Mode
+    pnl = Config.total_pnl_pct
+    pnl_indicator = "PROFIT" if pnl >= 0 else "LOSS"
     print(f"💰 Starting Capital: ${Config.STARTING_CAPITAL:,.2f}")
+    print(f"💼 Current Capital: ${Config.CURRENT_CAPITAL:,.2f} ({pnl:+.2f}% {pnl_indicator})")
+    print(f"🏆 Capital Tier: {Config.CAPITAL_TIER.upper()}")
     print(f"📊 Trading Mode: {'🟢 PAPER TRADING' if Config.PAPER_TRADING else '🔴 LIVE TRADING ⚠️'}")
     print(f"📈 Exchange: {Config.EXCHANGE.upper()}")
     
     # Position Management
-    print(f"\n📍 POSITION MANAGEMENT:")
+    print(f"\n📍 POSITION MANAGEMENT (Auto-Adjusted):")
     print(f"   Max Positions: {Config.MAX_OPEN_POSITIONS}")
     print(f"   Position Size: {Config.MAX_POSITION_PCT*100:.1f}% per trade")
-    print(f"   Max Risk Per Trade: {Config.MAX_RISK_PER_TRADE*100:.1f}%")
+    print(f"   Min Position: ${Config.MIN_POSITION_USD}")
+    print(f"   Max Risk Per Trade: {Config.MAX_RISK_PER_TRADE*100:.2f}%")
     print(f"   Max Portfolio Risk: {Config.MAX_PORTFOLIO_RISK*100:.1f}%")
-    print(f"   Dynamic Capacity: {'✅ ENABLED' if Config.ENABLE_DYNAMIC_CAPACITY else '❌ DISABLED'}")
     
     # Risk Management
-    print(f"\n🛡️  RISK MANAGEMENT:")
+    print(f"\n🛡️  RISK MANAGEMENT (Auto-Adjusted):")
     if Config.USE_ATR_EXITS:
         print(f"   Stop Loss: {Config.ATR_SL_MULT}×ATR (Dynamic)")
         print(f"   Take Profit: {Config.ATR_TP_MULT}×ATR (Dynamic)")
         print(f"   Risk/Reward Ratio: {Config.ATR_TP_MULT/Config.ATR_SL_MULT:.1f}:1")
-        print(f"   Max SL: {Config.MAX_SL_PCT*100:.1f}%")
-        print(f"   Max TP: {Config.MAX_TP_PCT*100:.1f}%")
+        print(f"   Max SL: {Config.MAX_SL_PCT*100:.2f}%")
+        print(f"   Max TP: {Config.MAX_TP_PCT*100:.2f}%")
     else:
         print(f"   Stop Loss: {Config.FALLBACK_STOP_LOSS_PCT*100:.1f}% (Fixed)")
         print(f"   Take Profit: {Config.FALLBACK_TAKE_PROFIT_PCT*100:.1f}% (Fixed)")
     
     if Config.ENABLE_ATR_TRAILING:
         print(f"   Trailing Stop: ✅ ENABLED ({Config.TRAIL_DISTANCE_ATR_MULT}×ATR)")
+        print(f"   Trail Activation: {Config.TRAIL_ACTIVATE_ATR_MULT}×ATR")
     
     if Config.ENABLE_PARTIAL_TP:
         print(f"   Partial Take Profit: ✅ ENABLED ({Config.PARTIAL_TP_PCT*100:.0f}%)")
+        print(f"   Partial TP Trigger: {Config.PARTIAL_TP_TRIGGER_ATR_MULT}×ATR")
     
     # Daily Loss Protection
-    if getattr(Config, 'ENABLE_DAILY_LOSS_CAP', False):
+    if Config.ENABLE_DAILY_LOSS_CAP:
         print(f"\n🚨 DAILY LOSS PROTECTION:")
         print(f"   Max Daily Loss: ${Config.MAX_DAILY_LOSS_AMOUNT} or {Config.MAX_DAILY_LOSS_PCT*100:.1f}%")
         print(f"   Auto-Pause: ✅ ENABLED")
     
     # Signal Settings
-    print(f"\n🎯 SIGNAL SETTINGS:")
+    print(f"\n🎯 SIGNAL SETTINGS (Auto-Adjusted):")
     print(f"   Confidence Threshold: {Config.SIGNAL_CONFIDENCE_THRESHOLD*100:.0f}%")
-    print(f"   High Confidence: {Config.HIGH_CONFIDENCE_THRESHOLD*100:.0f}%")
+    print(f"   Min Quality Score: {Config.MIN_QUALITY_SCORE}")
     print(f"   RSI Oversold/Overbought: {Config.RSI_OVERSOLD}/{Config.RSI_OVERBOUGHT}")
-    print(f"   Min ATR: {Config.MIN_ATR_PCT*100:.2f}%")
     
     # Watchlist
-    print(f"\n🪙 WATCHLIST:")
-    if Config.USE_ROTATING_WATCHLISTS:
-        print(f"   Mode: 🔄 ROTATING")
-        print(f"   Watchlist A: {len(Config.WATCHLIST_A)} coins - {', '.join(Config.WATCHLIST_A[:5])}")
-        print(f"   Watchlist B: {len(Config.WATCHLIST_B)} coins - {', '.join(Config.WATCHLIST_B[:5])}")
-        print(f"   Watchlist C: {len(Config.WATCHLIST_C)} coins - {', '.join(Config.WATCHLIST_C[:5])}")
-        print(f"   Rotation Interval: {Config.GROUP_SCAN_OFFSET}s")
-    else:
-        print(f"   Mode: 📋 STATIC")
-        print(f"   Total Coins: {len(Config.WATCHLIST)}")
-        print(f"   {', '.join(Config.WATCHLIST[:10])}")
-        if len(Config.WATCHLIST) > 10:
-            print(f"   ...and {len(Config.WATCHLIST) - 10} more")
+    print(f"\n🪙 WATCHLIST (Tier-Based):")
+    print(f"   Total Coins: {len(Config.WATCHLIST)}")
+    print(f"   {', '.join(Config.WATCHLIST[:8])}")
+    if len(Config.WATCHLIST) > 8:
+        print(f"   ...and {len(Config.WATCHLIST) - 8} more")
     
     # Timing
-    print(f"\n⏱️  TIMING:")
+    print(f"\n⏱️  TIMING (Auto-Adjusted):")
     print(f"   Scan Interval: {Config.SCAN_INTERVAL}s")
     print(f"   Max Position Duration: {Config.MAX_POSITION_HOURS}h")
     
@@ -210,19 +219,18 @@ def display_configuration(logger):
     print(f"\n💸 FEES & COSTS:")
     print(f"   Trading Fee: {Config.TRADING_FEE*100:.2f}%")
     if Config.INCLUDE_SLIPPAGE:
-        print(f"   Slippage: {Config.SLIPPAGE_RATE*100:.2f}%")
-    if Config.APPLY_INDIAN_TAX:
-        print(f"   Tax: {Config.CAPITAL_GAINS_TAX*100:.0f}% (Capital Gains)")
+        print(f"   Slippage: {Config.SLIPPAGE_RATE*100:.3f}%")
     
     # Advanced Features
-    print(f"\n🚀 ADVANCED FEATURES:")
-    print(f"   Market Filter: {'✅ ENABLED' if Config.ENABLE_MARKET_FILTER else '❌ DISABLED'}")
-    print(f"   Streak Detection: {'✅ ENABLED' if Config.ENABLE_STREAK_DETECTION else '❌ DISABLED'}")
-    print(f"   Revenge Trade Prevention: {'✅ ENABLED' if Config.PREVENT_REVENGE_TRADING else '❌ DISABLED'}")
+    print(f"\n🚀 ADVANCED FEATURES (Capital-Dependent):")
+    print(f"   ML Predictions: {'✅ ENABLED' if Config.ML_ENABLED else '❌ DISABLED (Low Capital)'}")
+    print(f"   Sentiment Analysis: {'✅ ENABLED' if Config.ENABLE_SENTIMENT_ANALYSIS else '❌ DISABLED (Low Capital)'}")
+    print(f"   Multi-Timeframe: {'✅ ENABLED' if Config.ENABLE_MULTI_TIMEFRAME else '❌ DISABLED (Low Capital)'}")
+    print(f"   Arbitrage: {'✅ ENABLED' if Config.ENABLE_ARBITRAGE else '❌ DISABLED (Low Capital)'}")
     print(f"   Online Learning: {'✅ ENABLED' if Config.ENABLE_ONLINE_LEARNING else '❌ DISABLED'}")
-    print(f"   Adaptive Sizing: {'✅ ENABLED' if Config.ENABLE_ADAPTIVE_SIZING else '❌ DISABLED'}")
     
     print("="*78)
+
 
 
 def validate_configuration(logger):
@@ -232,8 +240,7 @@ def validate_configuration(logger):
     
     # Critical Errors
     if not hasattr(Config, 'WATCHLIST') or not Config.WATCHLIST:
-        if not hasattr(Config, 'WATCHLIST_A') or not Config.WATCHLIST_A:
-            errors.append("No watchlist configured")
+        errors.append("No watchlist configured")
     
     if Config.STARTING_CAPITAL <= 0:
         errors.append("Starting capital must be positive")
@@ -260,16 +267,13 @@ def validate_configuration(logger):
     if Config.MAX_RISK_PER_TRADE > 0.05:
         warnings.append(f"Risk per trade is high ({Config.MAX_RISK_PER_TRADE*100:.0f}%)")
     
-    if Config.MAX_POSITION_PCT > 0.10:
+    if Config.MAX_POSITION_PCT > 0.15:
         warnings.append(f"Position size is large ({Config.MAX_POSITION_PCT*100:.0f}%)")
-    
-    if Config.MAX_OPEN_POSITIONS > 10:
-        warnings.append(f"Max positions is high ({Config.MAX_OPEN_POSITIONS})")
     
     if not Config.USE_ATR_EXITS:
         warnings.append("Using fixed stop loss/take profit (ATR exits disabled)")
     
-    if not getattr(Config, 'ENABLE_DAILY_LOSS_CAP', False):
+    if not Config.ENABLE_DAILY_LOSS_CAP:
         warnings.append("Daily loss cap is disabled")
     
     # Display warnings
@@ -292,6 +296,7 @@ def validate_configuration(logger):
     return True
 
 
+
 def display_controls():
     """Display keyboard controls"""
     print("\n" + "="*78)
@@ -301,9 +306,11 @@ def display_controls():
     print("Press 'S' + Enter    : Show current status & positions")
     print("Press 'P' + Enter    : Pause/Resume trading")
     print("Press 'E' + Enter    : Emergency exit all positions")
-    print("Press 'V' + Enter    : Validate position count")
+    print("Press 'C' + Enter    : Show current config & capital")
+    print("Press 'U' + Enter    : Update capital manually")
     print("Press Ctrl+C         : Stop bot gracefully")
     print("="*78 + "\n")
+
 
 
 def input_listener(bot, stop_event):
@@ -342,11 +349,17 @@ def input_listener(bot, stop_event):
                         total_pnl = portfolio_value - bot.starting_capital
                         total_pnl_pct = (total_pnl / bot.starting_capital) * 100
                         
+                        # Calculate win rate
+                        win_rate = 0.0
+                        if bot.total_trades > 0:
+                            win_rate = (bot.winning_trades / bot.total_trades) * 100
+                        
                         print(f"💼 Portfolio Value: ${portfolio_value:,.2f}")
                         print(f"💰 P&L: ${total_pnl:+,.2f} ({total_pnl_pct:+.2f}%)")
                         print(f"💵 Available Capital: ${bot.available_capital:,.2f}")
                         print(f"📊 Open Positions: {len(bot.positions)}/{bot.config.MAX_OPEN_POSITIONS}")
-                        print(f"🎯 Total Trades: {bot.total_trades}")
+                        print(f"🎯 Total Trades: {bot.total_trades} | Win Rate: {win_rate:.1f}%")
+
                         
                         if bot.positions:
                             print(f"\n📍 OPEN POSITIONS ({len(bot.positions)}):")
@@ -354,7 +367,7 @@ def input_listener(bot, stop_event):
                                 current_price = bot.get_current_price_safe(symbol)
                                 if current_price:
                                     pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price'] * 100)
-                                    emoji = "🟢" if pnl_pct > 0 else "🔴" if pnl_pct < 0 else "⚪"
+                                    emoji = "+" if pnl_pct > 0 else "-" if pnl_pct < 0 else "="
                                     print(f"   {emoji} {symbol}: ${pos['value']:.2f} @ ${pos['entry_price']:.4f} | P&L: {pnl_pct:+.2f}%")
                     except Exception as e:
                         print(f"❌ Error displaying status: {e}")
@@ -363,7 +376,7 @@ def input_listener(bot, stop_event):
                     # Pause/Resume
                     if hasattr(bot, 'trading_paused'):
                         bot.trading_paused = not bot.trading_paused
-                        status = "⏸️  PAUSED" if bot.trading_paused else "▶️  RESUMED"
+                        status = "PAUSED" if bot.trading_paused else "RESUMED"
                         print(f"\n{status}")
                     else:
                         print("\n❌ Pause functionality not available")
@@ -384,9 +397,31 @@ def input_listener(bot, stop_event):
                     else:
                         print("❌ Cancelled")
                 
-                elif command == 'v':
-                    # Validate positions
-                    print(f"\n🔍 Position count: {len(bot.positions)}/{bot.config.MAX_OPEN_POSITIONS}")
+                elif command == 'c':
+                    # Show current config
+                    print("\n")
+                    Config.print_summary()
+                
+                elif command == 'u':
+                    # Update capital manually
+                    print("\n💰 Enter new capital value: ", end='', flush=True)
+                    try:
+                        # Read input line by line
+                        new_cap_str = input()
+                        new_capital = float(new_cap_str)
+                        
+                        if new_capital > 0:
+                            old_capital = Config.CURRENT_CAPITAL
+                            Config.update_capital(new_capital)
+                            bot.config = Config  # Update bot's config reference
+                            print(f"✅ Capital updated: ${old_capital:.2f} -> ${new_capital:.2f}")
+                            Config.print_summary()
+                        else:
+                            print("❌ Capital must be positive")
+                    except ValueError:
+                        print("❌ Invalid number")
+                    except Exception as e:
+                        print(f"❌ Update failed: {e}")
             
             # Sleep briefly to avoid CPU spinning
             time.sleep(0.1)
@@ -394,6 +429,7 @@ def input_listener(bot, stop_event):
         except Exception as e:
             if not stop_event.is_set():
                 pass  # Ignore errors during normal operation
+
 
 
 def setup_signal_handlers(stop_event):
@@ -417,6 +453,21 @@ def setup_signal_handlers(stop_event):
     signal.signal(signal.SIGTERM, signal_handler)
 
 
+
+def sync_capital_after_trade(bot):
+    """
+    Call this function after every trade closes to update config
+    """
+    try:
+        current_portfolio_value = bot.calculate_portfolio_value()
+        Config.update_capital(current_portfolio_value)
+        bot.config = Config  # Update bot's config reference
+    except Exception as e:
+        if hasattr(bot, 'logger'):
+            bot.logger.warning(f"Failed to sync capital: {e}")
+
+
+
 def main():
     """
     Main entry point with comprehensive error handling
@@ -429,13 +480,17 @@ def main():
     
     try:
         # Setup logger first
-        logger = setup_logger(Config.LOG_FILE)
+        logger = setup_logger()
         logger.info("="*78)
         logger.info(f"Bot v{BOT_VERSION} starting up - {datetime.now()}")
         logger.info("="*78)
         
         # Display startup
         display_startup_banner()
+        
+        # Print initial config
+        Config.print_summary()
+        
         ml_available = display_ml_status(logger)
         display_configuration(logger)
         
@@ -454,6 +509,15 @@ def main():
         try:
             bot = TradingBot(Config)
             logger.info("✅ Bot initialized successfully")
+            
+            # Inject capital sync callback
+            original_execute_sell = bot.execute_sell
+            def execute_sell_with_sync(*args, **kwargs):
+                result = original_execute_sell(*args, **kwargs)
+                sync_capital_after_trade(bot)
+                return result
+            bot.execute_sell = execute_sell_with_sync
+            
         except Exception as e:
             logger.error(f"❌ Bot initialization failed: {e}")
             import traceback
@@ -461,10 +525,10 @@ def main():
             print(f"\n❌ Failed to initialize bot: {e}")
             return 1
         
-        # Add performance monitor (optional) - FIXED: No daemon parameter
+        # Add performance monitor (optional)
         try:
             from monitor import PerformanceMonitor
-            bot.monitor = PerformanceMonitor(bot)  # Removed daemon parameter
+            bot.monitor = PerformanceMonitor(bot)
             logger.info("✅ Performance monitor enabled")
         except ImportError:
             bot.monitor = None
@@ -479,13 +543,13 @@ def main():
         # Setup signal handlers
         setup_signal_handlers(stop_event)
         
-        # Start input listener thread - FIXED: daemon set after creation
+        # Start input listener thread
         listener_thread = threading.Thread(
             target=input_listener,
             args=(bot, stop_event),
             name="InputListener"
         )
-        listener_thread.daemon = True  # Set daemon as property (no warning)
+        listener_thread.daemon = True
         listener_thread.start()
         logger.info("✅ Input listener started")
         
@@ -523,6 +587,10 @@ def main():
                 if bot.total_trades > 0:
                     win_rate = (bot.winning_trades / bot.total_trades) * 100
                     print(f"📈 Win Rate: {win_rate:.1f}%")
+                
+                # Print final config state
+                print("\n")
+                Config.print_summary()
             except:
                 pass
         
@@ -540,7 +608,7 @@ def main():
             logger.error(traceback.format_exc())
         
         print(f"\nError: {e}")
-        print(f"\n💡 Check {Config.LOG_FILE} for detailed error information")
+        print(f"\n💡 Check logs/bot.log for detailed error information")
         
         return 1
     
@@ -566,6 +634,7 @@ def main():
             logger.info("="*78)
         
         print("✅ Cleanup complete\n")
+
 
 
 if __name__ == "__main__":

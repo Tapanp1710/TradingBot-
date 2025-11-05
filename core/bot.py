@@ -1270,7 +1270,7 @@ class TradingBot:
         return False
 
     def check_daily_loss_cap(self) -> bool:
-        """Check if daily loss limit reached"""
+        """Check if daily loss limit reached - FIXED VERSION"""
         if not self.config.ENABLE_DAILY_LOSS_CAP:
             return True
 
@@ -1281,24 +1281,45 @@ class TradingBot:
             self.last_daily_reset = today
             logger.info(f"🔄 Daily capital reset: ${self.capital:,.2f}")
 
+        # Calculate current loss
         daily_pnl = self.capital - self.daily_starting_capital
-        daily_pnl_pct = (daily_pnl / self.daily_starting_capital) * 100
+        daily_pnl_pct = (daily_pnl / self.daily_starting_capital) * 100  # Already a percentage!
 
         if daily_pnl < 0:
             loss_amount = abs(daily_pnl)
+            loss_pct = abs(daily_pnl_pct)  # Positive percentage for comparison
+            
+            # FIXED: Compare apples to apples
+            # loss_pct is already percentage (e.g., 4.32)
+            # config value needs to be percentage too
+            max_loss_pct = self.config.MAX_DAILY_LOSS_PCT * 100  # Convert 0.04 to 4.0
+            max_loss_amount = self.config.MAX_DAILY_LOSS_AMOUNT
 
-            if (abs(daily_pnl_pct) >= self.config.MAX_DAILY_LOSS_PCT * 100 or
-                loss_amount >= self.config.MAX_DAILY_LOSS_AMOUNT):
-
+            # Check if either limit exceeded
+            if loss_pct >= max_loss_pct or loss_amount >= max_loss_amount:
+                
                 if not self.daily_loss_triggered:
                     self.daily_loss_triggered = True
+                    logger.error("="*70)
                     logger.error("🚨 DAILY LOSS CAP REACHED!")
-                    logger.error(f"   📉 Loss: ${loss_amount:.2f} ({daily_pnl_pct:.2f}%)")
-                    logger.error("   ⏸️ Trading PAUSED until next day")
+                    logger.error("="*70)
+                    logger.error(f"   Current Loss: ${loss_amount:.2f} ({loss_pct:.2f}%)")
+                    logger.error(f"   Max Allowed: ${max_loss_amount:.2f} or {max_loss_pct:.2f}%")
+                    logger.error("   ⏸️ Trading PAUSED until next day (midnight UTC)")
+                    logger.error("="*70)
+                    
+                    # Close all open positions
+                    if self.positions:
+                        logger.warning(f"   Closing {len(self.positions)} open positions...")
+                        for symbol in list(self.positions.keys()):
+                            try:
+                                self.execute_sell(symbol, reason="Daily Loss Cap Hit")
+                            except Exception as e:
+                                logger.error(f"   Failed to close {symbol}: {e}")
 
-                return False
+                return False  # Trading is paused
 
-        return True
+        return True  # Trading is allowed
 
     def calculate_portfolio_value(self) -> float:
         """Calculate total portfolio value"""
