@@ -5,3 +5,8 @@ requests==2.31.0
 vaderSentiment==3.3.2
 python-dotenv==1.0.0
 matplotlib==3.7.1
+"""
+git add .
+git commit -m "v6.4"
+git push origin main
+"""

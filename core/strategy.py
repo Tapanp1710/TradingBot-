@@ -332,10 +332,14 @@ class TradingStrategy:
         
         combined_score = sum(scores.values()) * volume_multiplier
         confidence = abs(combined_score)
-        threshold = getattr(self.config, 'SIGNAL_CONFIDENCE_THRESHOLD', 0.48)
-        
+        # NEW - Use adaptive threshold
+        if hasattr(self.config, 'get_simple_adaptive_confidence'):
+            threshold = self.config.get_simple_adaptive_confidence()
+        else:
+            threshold = getattr(self.config, 'SIGNAL_CONFIDENCE_THRESHOLD', 0.48)
+
         # 🔴 MORE AGGRESSIVE THRESHOLDS
-        if combined_score > (threshold - 0.15) and confidence >= (threshold - 0.05):
+        if combined_score > (threshold - 0.20) and confidence >= (threshold - 0.15):
             return 'BUY', min(confidence, 0.95)
         elif combined_score < -(threshold - 0.10) and confidence >= threshold:
             return 'SELL', min(confidence, 0.95)
