@@ -165,6 +165,203 @@ class DynamicConfig:
         elif cap < 5000: return 0.58
         else: return 0.60
     
+    # ===================================================================
+    # ADAPTIVE CONFIDENCE THRESHOLD SYSTEM (NEW v6.4)
+    # ===================================================================
+    
+    def get_adaptive_confidence(self, 
+                               win_rate=None, 
+                               recent_signals=None,
+                               market_volatility=None,
+                               hour=None):
+        """
+        MASTER adaptive threshold - combines ALL strategies
+        
+        Args:
+            win_rate: Current win rate (0-100)
+            recent_signals: List of recent signal confidences
+            market_volatility: Average ATR from recent scans
+            hour: Current hour (0-23), auto-detected if None
+        
+        Returns:
+            float: Adaptive confidence threshold (0.45-0.70)
+        """
+        import datetime
+        
+        # Get base threshold from capital tier
+        base_threshold = self._calc_confidence(self._current_capital)
+        adjustments = []
+        
+        # === STRATEGY 1: Time-based adjustment ===
+        if hour is None:
+            hour = datetime.datetime.now().hour
+        
+        time_adj = self._get_time_based_adjustment(hour)
+        adjustments.append(("time", time_adj))
+        
+        # === STRATEGY 2: Win rate adjustment ===
+        if win_rate is not None:
+            wr_adj = self._get_winrate_adjustment(win_rate)
+            adjustments.append(("winrate", wr_adj))
+        
+        # === STRATEGY 3: Market signals availability ===
+        if recent_signals is not None and len(recent_signals) > 0:
+            signal_adj = self._get_signal_availability_adjustment(recent_signals)
+            adjustments.append(("signals", signal_adj))
+        
+        # === STRATEGY 4: Volatility-based ===
+        if market_volatility is not None:
+            vol_adj = self._get_volatility_adjustment(market_volatility)
+            adjustments.append(("volatility", vol_adj))
+        
+        # Apply all adjustments with weights
+        final_threshold = base_threshold
+        for name, adj in adjustments:
+            final_threshold += adj
+        
+        # Keep within safe bounds
+        final_threshold = max(0.45, min(0.70, final_threshold))
+        
+        # Log if significant change
+        if abs(final_threshold - base_threshold) > 0.05:
+            print(f"\n⚙️  ADAPTIVE THRESHOLD ACTIVE")
+            print(f"   Base: {base_threshold:.1%} → Adjusted: {final_threshold:.1%}")
+            for name, adj in adjustments:
+                if abs(adj) > 0.01:
+                    print(f"   {name.capitalize()}: {adj:+.1%}")
+        
+        return final_threshold
+    
+    
+    def _get_time_based_adjustment(self, hour):
+        """
+        Adjust threshold based on trading hour
+        Peak hours = stricter, Dead hours = looser
+        """
+        # Peak crypto trading hours (UTC-based, convert if needed)
+        if hour in [21, 22, 23, 0, 1, 2]:  # 9 PM - 2 AM IST
+            return 0.0  # No change - good liquidity
+        
+        # Dead hours (low activity)
+        elif hour in [6, 7, 8, 9, 17, 18, 19]:  # Morning & evening lulls
+            return -0.10  # Lower threshold (accept more signals)
+        
+        # Very dead hours
+        elif hour in [3, 4, 5]:  # 3-6 AM IST
+            return -0.15  # Very low threshold
+        
+        # Normal hours
+        else:
+            return -0.05  # Slightly lower
+    
+    
+    def _get_winrate_adjustment(self, win_rate):
+        """
+        Adjust based on performance
+        Losing = stricter, Winning = maintain/loosen
+        """
+        if win_rate < 30:  # Badly losing
+            return +0.10  # Much stricter (prevent more losses)
+        
+        elif win_rate < 45:  # Losing
+            return +0.05  # Stricter
+        
+        elif win_rate > 70:  # Winning a lot
+            return -0.05  # Slightly looser (system working!)
+        
+        elif win_rate > 60:  # Good performance
+            return 0.0  # Maintain
+        
+        else:  # 45-60% (normal)
+            return 0.0  # No change
+    
+    
+    def _get_signal_availability_adjustment(self, recent_signals):
+        """
+        Adjust based on how many quality signals available
+        Few signals = lower threshold to get trades
+        Many signals = raise threshold to get best only
+        """
+        # Count signals above various thresholds
+        above_60 = sum(1 for s in recent_signals if s >= 0.60)
+        above_55 = sum(1 for s in recent_signals if s >= 0.55)
+        above_50 = sum(1 for s in recent_signals if s >= 0.50)
+        total = len(recent_signals)
+        
+        # Very few quality signals (choppy market)
+        if above_55 < 2 and total > 10:
+            return -0.10  # Lower threshold significantly
+        
+        # Some medium signals available
+        elif above_50 >= 5 and above_55 < 3:
+            return -0.05  # Lower slightly
+        
+        # Many high quality signals (trending market)
+        elif above_60 >= 5:
+            return +0.05  # Raise threshold (be selective)
+        
+        # Normal market
+        else:
+            return 0.0
+    
+    
+    def _get_volatility_adjustment(self, avg_atr):
+        """
+        Adjust based on market volatility
+        High volatility = stricter (avoid whipsaws)
+        Low volatility = looser (need to trade)
+        """
+        if avg_atr < 0.01:  # Very low volatility (<1%)
+            return -0.10  # Much lower threshold
+        
+        elif avg_atr < 0.015:  # Low volatility (<1.5%)
+            return -0.05  # Lower threshold
+        
+        elif avg_atr > 0.035:  # High volatility (>3.5%)
+            return +0.05  # Raise threshold
+        
+        elif avg_atr > 0.05:  # Very high volatility (>5%)
+            return +0.10  # Much stricter
+        
+        else:  # Normal volatility (1.5-3.5%)
+            return 0.0
+    
+    
+    def get_simple_adaptive_confidence(self, hour=None):
+        """
+        Simple time-based adaptive threshold
+        Use this if you don't have win_rate/signals data yet
+        """
+        import datetime
+        
+        if hour is None:
+            hour = datetime.datetime.now().hour
+        
+        base = self._calc_confidence(self._current_capital)
+        time_adj = self._get_time_based_adjustment(hour)
+        
+        final = base + time_adj
+        final = max(0.45, min(0.70, final))
+        
+        return final
+    
+    
+    def should_use_adaptive_threshold(self):
+        """
+        Determine if adaptive thresholds should be used
+        Based on capital tier and feature flags
+        """
+        # Always use for medium tier and above
+        if self._current_capital >= 1000:
+            return True
+        
+        # Use for small tier if enabled
+        if self._current_capital >= 500:
+            return True
+        
+        # Micro tier: optional
+        return self._current_capital >= 300
+
     def _calc_quality(self, cap):
         """INCREASED: Higher quality signals only"""
         if cap < 300: return 40
@@ -724,3 +921,27 @@ if __name__ == "__main__":
     print(f"Current tier: {config.CAPITAL_TIER}")
     print(f"ML Enabled: {config.ML_ENABLED}")
     print(f"Watchlist size: {len(config.WATCHLIST)}")
+        # Test adaptive thresholds
+    print("\n" + "="*70)
+    print("ADAPTIVE THRESHOLD TESTING")
+    print("="*70)
+    
+    # Test with no data (time-based only)
+    simple_threshold = config.get_simple_adaptive_confidence()
+    print(f"Simple adaptive (current hour): {simple_threshold:.1%}")
+    
+    # Test with full data
+    test_signals = [0.45, 0.48, 0.52, 0.49, 0.51, 0.47, 0.50, 0.46]
+    adaptive_threshold = config.get_adaptive_confidence(
+        win_rate=55,
+        recent_signals=test_signals,
+        market_volatility=0.018,
+        hour=22  # 10 PM
+    )
+    print(f"Full adaptive threshold: {adaptive_threshold:.1%}")
+    
+    # Test at different hours
+    print("\nThreshold by hour:")
+    for h in [6, 10, 14, 18, 22, 2]:
+        t = config.get_simple_adaptive_confidence(hour=h)
+        print(f"  {h:2d}:00 → {t:.1%}")

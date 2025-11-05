@@ -117,6 +117,8 @@ class TradingBot:
         self.total_trades = 0
         self.winning_trades = 0
         self.losing_trades = 0
+        self.recent_signal_confidences = deque(maxlen=20)  # Track last 20 signals
+        self.recent_atr_values = deque(maxlen=10)  # Track recent volatility
         self.arbitrage_profit = 0
         self.arbitrage_trades = 0
         self.total_fees_paid = 0
@@ -512,6 +514,7 @@ class TradingBot:
                     min_atr = self.config.MIN_ATR_PCT * 100
                     
                     logger.info(f"   {symbol}: ATR={atr_pct:.3f}% (min={min_atr:.3f}%)")
+                    self.recent_atr_values.append(atr / current_price)  # Store as decimal
                     
                     # Check minimum volatility
                     if atr_pct < min_atr:
@@ -529,16 +532,49 @@ class TradingBot:
                     confidence = signal_data.get('confidence', 0.0)
                     
                     logger.info(f"   {symbol}: Signal={signal} | Confidence={confidence:.1%}")
-                    
+                    self.recent_signal_confidences.append(confidence)                    
                     # Check if signal meets threshold
                     if signal != 'BUY':
                         logger.info(f"❌ {symbol}: Signal is {signal}, need BUY")
                         continue
-                    
-                    if confidence < self.config.SIGNAL_CONFIDENCE_THRESHOLD:
-                        logger.info(f"❌ {symbol}: Confidence {confidence:.1%} < {self.config.SIGNAL_CONFIDENCE_THRESHOLD:.1%}")
+
+                    # === ADAPTIVE THRESHOLD SYSTEM (v6.4) ===
+                    # Calculate adaptive threshold based on market conditions
+                    try:
+                        # Get current win rate
+                        current_win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else None
+                        
+                        # Get average ATR from recent scans
+                        avg_atr = sum(self.recent_atr_values) / len(self.recent_atr_values) if self.recent_atr_values else None
+                        
+                        # Get list of recent signals for availability check
+                        recent_signals_list = list(self.recent_signal_confidences) if self.recent_signal_confidences else None
+                        
+                        # Calculate adaptive threshold
+                        if hasattr(self.config, 'get_adaptive_confidence'):
+                            adaptive_threshold = self.config.get_adaptive_confidence(
+                                win_rate=current_win_rate,
+                                recent_signals=recent_signals_list,
+                                market_volatility=avg_atr,
+                                hour=None  # Auto-detected
+                            )
+                        else:
+                            # Fallback to static threshold if adaptive not available
+                            adaptive_threshold = self.config.SIGNAL_CONFIDENCE_THRESHOLD
+                        
+                        # Log threshold being used
+                        if adaptive_threshold != self.config.SIGNAL_CONFIDENCE_THRESHOLD:
+                            logger.info(f"   ⚙️ Using adaptive threshold: {adaptive_threshold:.1%} (base: {self.config.SIGNAL_CONFIDENCE_THRESHOLD:.1%})")
+                        
+                    except Exception as e:
+                        logger.debug(f"Adaptive threshold error, using static: {e}")
+                        adaptive_threshold = self.config.SIGNAL_CONFIDENCE_THRESHOLD
+
+                    # Check confidence against adaptive threshold
+                    if confidence < adaptive_threshold:
+                        logger.info(f"❌ {symbol}: Confidence {confidence:.1%} < {adaptive_threshold:.1%}")
                         continue
-                    
+
                     # Analyze signal quality
                     try:
                         quality = self.analyze_signal_quality(signal_data)
