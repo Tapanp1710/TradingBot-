@@ -1,33 +1,47 @@
 """
-Dynamic Trading Bot Configuration v6.3 - FULLY ADAPTIVE (FIXED)
-November 4, 2025 - Correct tier boundaries
-ALL parameters scale properly with $1000 = MEDIUM tier
+Dynamic Trading Bot Configuration v6.4.1 - FULLY ADAPTIVE WITH SIGNAL TRACKING
+November 7, 2025 - Complete production-ready configuration
+- Capital-based adjustments
+- Adaptive confidence thresholds (time, win-rate, volatility, signals)
+- ML enabled for all accounts > $500
+- Signal surge detection and filtering
 """
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 
 
 class DynamicConfig:
     """
-    Configuration that adapts to capital changes in real-time
-    Drop-in replacement for static Config class with backward compatibility
+    Production-ready configuration with:
+    - Capital-based dynamic adjustments
+    - Real-time adaptive thresholds (4 strategies)
+    - ML ensemble enabled (Random Forest + LightGBM + XGBoost)
+    - Signal tracking and surge filtering
+    - Win-rate adjustments
+    - Market volatility sensing
     """
     
     def __init__(self, starting_capital=None):
-        """Initialize with starting capital"""
+        """Initialize with starting capital and signal tracking"""
         self._starting_capital = starting_capital or float(os.getenv('STARTING_CAPITAL', '1000'))
         self._current_capital = self._starting_capital
         self._last_update = datetime.now()
         
-        # Static values (don't change with capital)
-        self.BOT_VERSION = "6.3.0"
-        self.CONFIG_VERSION = "6.3-DYNAMIC-FIXED"
+        # Signal tracking
+        self._recent_buy_signals = []
+        self._signal_check_window_secs = 60
+        self._signal_history_limit = 50
+        
+        # Static values
+        self.BOT_VERSION = "6.4.1"
+        self.CONFIG_VERSION = "6.4.1-ADAPTIVE-WITH-SIGNALS"
         self.EXCHANGE = "binance"
         self.API_KEY = os.getenv('EXCHANGE_API_KEY', '')
         self.API_SECRET = os.getenv('EXCHANGE_API_SECRET', '')
         self.PAPER_TRADING = os.getenv('PAPER_TRADING', 'True').lower() == 'true'
         
-        # Initialize all dynamic parameters
+        # Initialize all parameters
         self._update_all_params()
     
     
@@ -38,8 +52,6 @@ class DynamicConfig:
     def update_capital(self, new_capital):
         """
         Call this after every trade or daily to recalculate all parameters
-        Args:
-            new_capital: Current portfolio value
         """
         old_tier = self._get_tier(self._current_capital)
         old_positions = self.MAX_OPEN_POSITIONS
@@ -50,7 +62,7 @@ class DynamicConfig:
         self._update_all_params()
         self._last_update = datetime.now()
         
-        # Notify on tier or position changes
+        # Notify on tier changes
         if old_tier != new_tier:
             print(f"\n{'='*70}")
             print(f"CAPITAL TIER CHANGED: {old_tier.upper()} -> {new_tier.upper()}")
@@ -64,167 +76,475 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # TIER & CALCULATION HELPERS (FIXED BOUNDARIES)
+    # TIER & CALCULATION HELPERS
     # ===================================================================
     
     def _get_tier(self, cap):
         """Get capital tier - FIXED boundaries"""
-        if cap < 250: return 'micro'
-        elif cap < 500: return 'small'
-        elif cap <= 1000: return 'medium'  # ← FIXED: $1000 = MEDIUM
-        elif cap < 3000: return 'large'
-        else: return 'whale'
+        if cap < 250:
+            return 'micro'
+        elif cap < 500:
+            return 'small'
+        elif cap <= 1000:
+            return 'medium'
+        elif cap < 3000:
+            return 'large'
+        else:
+            return 'whale'
     
     def _calc_positions(self, cap):
-        """FIXED: Proper position counts"""
-        if cap < 200: return 2
-        elif cap < 400: return 2  # Changed from 3
-        elif cap < 600: return 3
-        elif cap <= 1000: return 3  # ← FIXED: $1000 = 3 positions
-        elif cap < 2000: return 4  # Changed from 5
-        elif cap < 3500: return 5  # Changed from 6
-        elif cap < 7000: return 6  # Changed from 8
-        else: return 8  # Changed from 10
+        """Proper position counts based on capital"""
+        if cap < 200:
+            return 2
+        elif cap < 400:
+            return 2
+        elif cap < 600:
+            return 3
+        elif cap <= 1000:
+            return 3
+        elif cap < 2000:
+            return 4
+        elif cap < 3500:
+            return 5
+        elif cap < 7000:
+            return 6
+        else:
+            return 8
     
     def _calc_position_pct(self, cap, pos):
-        """INCREASED: Larger positions for better profit potential"""
+        """Position size as % of capital"""
         base = 0.90 / pos
         return min(base * 1.2, 0.50)
     
     def _calc_min_pos(self, cap, pos):
+        """Minimum position size in USD"""
         avg = (cap * 0.90) / pos
         return max(40, int(avg * 0.45))
     
     def _calc_risk(self, cap):
-        """INCREASED: Allow more risk per trade for profit"""
-        if cap < 500: return 0.030
-        elif cap < 2000: return 0.025
-        elif cap < 5000: return 0.022
-        else: return 0.020
+        """Max risk per trade"""
+        if cap < 500:
+            return 0.030
+        elif cap < 2000:
+            return 0.025
+        elif cap < 5000:
+            return 0.022
+        else:
+            return 0.020
     
     def _calc_drawdown(self, cap):
-        if cap < 500: return 0.20
-        elif cap <= 1000: return 0.17
-        elif cap < 2000: return 0.15
-        elif cap < 5000: return 0.13
-        else: return 0.10
+        """Max drawdown limit"""
+        if cap < 500:
+            return 0.20
+        elif cap <= 1000:
+            return 0.17
+        elif cap < 2000:
+            return 0.15
+        elif cap < 5000:
+            return 0.13
+        else:
+            return 0.10
     
     def _calc_atr(self, cap):
-        if cap < 300: return 0.0010
-        elif cap < 500: return 0.0012
-        elif cap <= 1000: return 0.0015
-        elif cap < 5000: return 0.0020
-        else: return 0.0025
+        """ATR percentage minimum"""
+        if cap < 300:
+            return 0.0010
+        elif cap < 500:
+            return 0.0012
+        elif cap <= 1000:
+            return 0.0015
+        elif cap < 5000:
+            return 0.0020
+        else:
+            return 0.0025
     
     def _calc_sl_mult(self, cap):
-        """INCREASED: Wider stops to avoid premature exits"""
-        if cap < 300: return 1.5
-        elif cap < 500: return 1.6
-        elif cap <= 1000: return 1.7
-        elif cap < 5000: return 1.8
-        else: return 2.0
+        """Stop loss ATR multiplier"""
+        if cap < 300:
+            return 1.5
+        elif cap < 500:
+            return 1.6
+        elif cap <= 1000:
+            return 1.7
+        elif cap < 5000:
+            return 1.8
+        else:
+            return 2.0
     
     def _calc_sl_pct(self, cap):
-        """INCREASED: Wider percentage stops"""
-        if cap < 300: return 0.035  # Changed from 0.025
-        elif cap < 500: return 0.030  # Changed from 0.023
-        elif cap <= 1000: return 0.025  # Changed from 0.020
-        elif cap < 5000: return 0.022  # Changed from 0.018
-        else: return 0.020  # Changed from 0.015
+        """Max stop loss percentage"""
+        if cap < 300:
+            return 0.035
+        elif cap < 500:
+            return 0.030
+        elif cap <= 1000:
+            return 0.025
+        elif cap < 5000:
+            return 0.022
+        else:
+            return 0.020
     
     def _calc_tp_mult(self, cap):
-        """NEW: Separate TP calculation - LOWER for realistic targets"""
-        if cap < 300: return 1.2
-        elif cap < 500: return 1.3
-        elif cap <= 1000: return 1.3
-        elif cap < 5000: return 1.5
-        else: return 1.9
+        """Take profit ATR multiplier"""
+        if cap < 300:
+            return 1.2
+        elif cap < 500:
+            return 1.3
+        elif cap <= 1000:
+            return 1.3
+        elif cap < 5000:
+            return 1.5
+        else:
+            return 1.9
     
     def _calc_trail(self, cap):
-        """ADJUSTED: Better trailing activation"""
-        if cap < 300: return 1.0
-        elif cap < 500: return 1.1
-        elif cap <= 1000: return 1.3
-        elif cap < 5000: return 1.5
-        else: return 1.8
+        """Trailing stop activation multiplier"""
+        if cap < 300:
+            return 1.0
+        elif cap < 500:
+            return 1.1
+        elif cap <= 1000:
+            return 1.3
+        elif cap < 5000:
+            return 1.5
+        else:
+            return 1.8
     
     def _calc_daily_loss(self, cap):
-        if cap < 300: return 0.050
-        elif cap < 500: return 0.045
-        elif cap <= 1000: return 0.040
-        elif cap < 2000: return 0.035
-        elif cap < 5000: return 0.030
-        else: return 0.025
+        """Daily loss limit percentage"""
+        if cap < 300:
+            return 0.050
+        elif cap < 500:
+            return 0.045
+        elif cap <= 1000:
+            return 0.040
+        elif cap < 2000:
+            return 0.035
+        elif cap < 5000:
+            return 0.030
+        else:
+            return 0.025
     
     def _calc_confidence(self, cap):
-        """LOWERED: More selective entries for quality"""
-        if cap < 300: return 0.50
-        elif cap < 500: return 0.52
-        elif cap <= 1000: return 0.595
-        elif cap < 2000: return 0.57
-        elif cap < 5000: return 0.58
-        else: return 0.60
+        """Base confidence threshold"""
+        if cap < 300:
+            return 0.50
+        elif cap < 500:
+            return 0.52
+        elif cap <= 1000:
+            return 0.60
+        elif cap < 2000:
+            return 0.57
+        elif cap < 5000:
+            return 0.58
+        else:
+            return 0.60
+    
+    def _calc_quality(self, cap):
+        """Min quality score (0-100)"""
+        if cap < 300:
+            return 40
+        elif cap < 500:
+            return 45
+        elif cap <= 1000:
+            return 50
+        elif cap < 2000:
+            return 55
+        elif cap < 5000:
+            return 60
+        else:
+            return 65
+    
+    def _calc_rsi(self, cap):
+        """RSI oversold threshold"""
+        if cap < 300:
+            return 38
+        elif cap < 500:
+            return 36
+        elif cap <= 1000:
+            return 35
+        elif cap < 5000:
+            return 33
+        else:
+            return 30
+    
+    def _calc_losses(self, cap):
+        """Max consecutive losses before cooldown"""
+        if cap < 500:
+            return 2
+        elif cap <= 1000:
+            return 3
+        elif cap < 2000:
+            return 4
+        else:
+            return 5
+    
+    def _calc_cooldown(self, cap):
+        """Cooldown hours after losses"""
+        if cap < 300:
+            return 0.5
+        elif cap < 500:
+            return 0.75
+        elif cap <= 1000:
+            return 1.0
+        elif cap < 5000:
+            return 1.5
+        else:
+            return 2.0
+    
+    def _calc_winrate(self, cap):
+        """Min win rate to trade"""
+        if cap < 300:
+            return 0.25
+        elif cap < 500:
+            return 0.28
+        elif cap <= 1000:
+            return 0.30
+        elif cap < 5000:
+            return 0.33
+        else:
+            return 0.35
+    
+    def _calc_emergency(self, cap):
+        """Emergency exit loss threshold"""
+        if cap < 300:
+            return 0.15
+        elif cap < 500:
+            return 0.14
+        elif cap <= 1000:
+            return 0.12
+        elif cap < 5000:
+            return 0.10
+        else:
+            return 0.08
+    
+    def _calc_pause(self, cap):
+        """Pause duration hours"""
+        if cap < 300:
+            return 1
+        elif cap < 500:
+            return 2
+        elif cap <= 1000:
+            return 3
+        elif cap < 5000:
+            return 4
+        else:
+            return 6
+    
+    def _calc_slippage(self, cap):
+        """Slippage rate"""
+        if cap < 300:
+            return 0.0008
+        elif cap < 500:
+            return 0.0007
+        elif cap <= 1000:
+            return 0.0006
+        elif cap < 5000:
+            return 0.0004
+        else:
+            return 0.0003
+    
+    def _calc_scan_offset(self, cap):
+        """Scan offset coins"""
+        if cap < 300:
+            return 8
+        elif cap < 500:
+            return 10
+        elif cap <= 1000:
+            return 12
+        elif cap < 5000:
+            return 15
+        else:
+            return 20
+    
+    def _calc_scan_int(self, cap):
+        """Scan interval seconds"""
+        if cap < 300:
+            return 15
+        elif cap < 500:
+            return 18
+        elif cap <= 1000:
+            return 20
+        elif cap < 5000:
+            return 25
+        else:
+            return 30
+    
+    def _calc_multipliers(self, cap):
+        """Position sizing multipliers (high, low)"""
+        if cap < 500:
+            return 1.25, 0.75
+        elif cap <= 1000:
+            return 1.20, 0.80
+        elif cap < 5000:
+            return 1.15, 0.85
+        else:
+            return 1.10, 0.90
+    
+    def _calc_grade(self, cap):
+        """Signal quality grade"""
+        if cap < 250:
+            return 'D'
+        elif cap <= 1000:
+            return 'C'
+        elif cap < 5000:
+            return 'B'
+        else:
+            return 'A'
+    
+    def _calc_ml_trades(self, cap):
+        """Min trades before ML update"""
+        if cap < 500:
+            return 4
+        elif cap <= 1000:
+            return 6
+        elif cap < 5000:
+            return 8
+        else:
+            return 10
+    
     
     # ===================================================================
-    # ADAPTIVE CONFIDENCE THRESHOLD SYSTEM (NEW v6.4)
+    # SIGNAL TRACKING & FILTERING
     # ===================================================================
+    
+    def track_buy_signal(self, confidence, symbol):
+        """Track incoming BUY signal"""
+        now = datetime.now()
+        self._recent_buy_signals.append((now, confidence, symbol))
+        
+        if len(self._recent_buy_signals) > self._signal_history_limit:
+            self._recent_buy_signals = self._recent_buy_signals[-self._signal_history_limit:]
+        
+        recent_count = self.get_recent_signal_count()
+        if recent_count >= 3:
+            print(f"SIGNAL SURGE: {recent_count} signals in {self._signal_check_window_secs}s - Threshold will increase")
+    
+    def get_recent_signal_count(self, window_secs=None):
+        """Count BUY signals in recent window"""
+        if window_secs is None:
+            window_secs = self._signal_check_window_secs
+        
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=window_secs)
+        
+        recent = [s for s in self._recent_buy_signals if s[0] >= cutoff]
+        return len(recent)
+    
+    def get_recent_signals(self, window_secs=None):
+        """Get all signals in recent window"""
+        if window_secs is None:
+            window_secs = self._signal_check_window_secs
+        
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=window_secs)
+        
+        return [s for s in self._recent_buy_signals if s[0] >= cutoff]
+    
+    def _get_signal_count_adjustment(self, count):
+        """Get threshold adjustment based on signal frequency"""
+        if count >= 5:
+            return +0.15
+        elif count >= 4:
+            return +0.10
+        elif count >= 3:
+            return +0.05
+        else:
+            return 0.0
+    
+    
+    # ===================================================================
+    # ADAPTIVE CONFIDENCE THRESHOLD - ALL 4 STRATEGIES
+    # ===================================================================
+    
+    def _get_time_based_adjustment(self, hour):
+        """Strategy 1: Time-based adjustment"""
+        if hour in [21, 22, 23, 0, 1, 2]:
+            return 0.0
+        elif hour in [6, 7, 8, 9, 17, 18, 19]:
+            return -0.10
+        elif hour in [3, 4, 5]:
+            return -0.15
+        else:
+            return -0.05
+    
+    def _get_winrate_adjustment(self, win_rate):
+        """Strategy 2: Performance-based adjustment"""
+        if win_rate < 30:
+            return +0.10
+        elif win_rate < 45:
+            return +0.05
+        elif win_rate > 70:
+            return -0.05
+        elif win_rate > 60:
+            return 0.0
+        else:
+            return 0.0
+    
+    def _get_signal_availability_adjustment(self, recent_signals):
+        """Strategy 3: Market condition adjustment"""
+        above_60 = sum(1 for s in recent_signals if s[1] >= 0.60)
+        above_55 = sum(1 for s in recent_signals if s[1] >= 0.55)
+        above_50 = sum(1 for s in recent_signals if s[1] >= 0.50)
+        total = len(recent_signals)
+        
+        if above_55 < 2 and total > 10:
+            return -0.10
+        elif above_50 >= 5 and above_55 < 3:
+            return -0.05
+        elif above_60 >= 5:
+            return +0.05
+        else:
+            return 0.0
+    
+    def _get_volatility_adjustment(self, avg_atr):
+        """Strategy 4: Volatility-based adjustment"""
+        if avg_atr < 0.01:
+            return -0.10
+        elif avg_atr < 0.015:
+            return -0.05
+        elif avg_atr > 0.035:
+            return +0.05
+        elif avg_atr > 0.05:
+            return +0.10
+        else:
+            return 0.0
     
     def get_adaptive_confidence(self, 
                                win_rate=None, 
                                recent_signals=None,
                                market_volatility=None,
                                hour=None):
-        """
-        MASTER adaptive threshold - combines ALL strategies
-        
-        Args:
-            win_rate: Current win rate (0-100)
-            recent_signals: List of recent signal confidences
-            market_volatility: Average ATR from recent scans
-            hour: Current hour (0-23), auto-detected if None
-        
-        Returns:
-            float: Adaptive confidence threshold (0.45-0.70)
-        """
-        import datetime
-        
-        # Get base threshold from capital tier
+        """Master adaptive threshold combining all strategies"""
         base_threshold = self._calc_confidence(self._current_capital)
         adjustments = []
         
-        # === STRATEGY 1: Time-based adjustment ===
         if hour is None:
-            hour = datetime.datetime.now().hour
+            hour = datetime.now().hour
         
         time_adj = self._get_time_based_adjustment(hour)
         adjustments.append(("time", time_adj))
         
-        # === STRATEGY 2: Win rate adjustment ===
         if win_rate is not None:
             wr_adj = self._get_winrate_adjustment(win_rate)
             adjustments.append(("winrate", wr_adj))
         
-        # === STRATEGY 3: Market signals availability ===
         if recent_signals is not None and len(recent_signals) > 0:
             signal_adj = self._get_signal_availability_adjustment(recent_signals)
             adjustments.append(("signals", signal_adj))
         
-        # === STRATEGY 4: Volatility-based ===
         if market_volatility is not None:
             vol_adj = self._get_volatility_adjustment(market_volatility)
             adjustments.append(("volatility", vol_adj))
         
-        # Apply all adjustments with weights
         final_threshold = base_threshold
         for name, adj in adjustments:
             final_threshold += adj
         
-        # Keep within safe bounds
-        final_threshold = max(0.45, min(0.70, final_threshold))
+        final_threshold = max(0.45, min(0.75, final_threshold))
         
-        # Log if significant change
         if abs(final_threshold - base_threshold) > 0.05:
-            print(f"\n⚙️  ADAPTIVE THRESHOLD ACTIVE")
+            print(f"\nADAPTIVE THRESHOLD ACTIVE")
             print(f"   Base: {base_threshold:.1%} → Adjusted: {final_threshold:.1%}")
             for name, adj in adjustments:
                 if abs(adj) > 0.01:
@@ -232,110 +552,52 @@ class DynamicConfig:
         
         return final_threshold
     
-    
-    def _get_time_based_adjustment(self, hour):
-        """
-        Adjust threshold based on trading hour
-        Peak hours = stricter, Dead hours = looser
-        """
-        # Peak crypto trading hours (UTC-based, convert if needed)
-        if hour in [21, 22, 23, 0, 1, 2]:  # 9 PM - 2 AM IST
-            return 0.0  # No change - good liquidity
-        
-        # Dead hours (low activity)
-        elif hour in [6, 7, 8, 9, 17, 18, 19]:  # Morning & evening lulls
-            return -0.10  # Lower threshold (accept more signals)
-        
-        # Very dead hours
-        elif hour in [3, 4, 5]:  # 3-6 AM IST
-            return -0.15  # Very low threshold
-        
-        # Normal hours
-        else:
-            return -0.05  # Slightly lower
-    
-    
-    def _get_winrate_adjustment(self, win_rate):
-        """
-        Adjust based on performance
-        Losing = stricter, Winning = maintain/loosen
-        """
-        if win_rate < 30:  # Badly losing
-            return +0.10  # Much stricter (prevent more losses)
-        
-        elif win_rate < 45:  # Losing
-            return +0.05  # Stricter
-        
-        elif win_rate > 70:  # Winning a lot
-            return -0.05  # Slightly looser (system working!)
-        
-        elif win_rate > 60:  # Good performance
-            return 0.0  # Maintain
-        
-        else:  # 45-60% (normal)
-            return 0.0  # No change
-    
-    
-    def _get_signal_availability_adjustment(self, recent_signals):
-        """
-        Adjust based on how many quality signals available
-        Few signals = lower threshold to get trades
-        Many signals = raise threshold to get best only
-        """
-        # Count signals above various thresholds
-        above_60 = sum(1 for s in recent_signals if s >= 0.60)
-        above_55 = sum(1 for s in recent_signals if s >= 0.55)
-        above_50 = sum(1 for s in recent_signals if s >= 0.50)
-        total = len(recent_signals)
-        
-        # Very few quality signals (choppy market)
-        if above_55 < 2 and total > 10:
-            return -0.10  # Lower threshold significantly
-        
-        # Some medium signals available
-        elif above_50 >= 5 and above_55 < 3:
-            return -0.05  # Lower slightly
-        
-        # Many high quality signals (trending market)
-        elif above_60 >= 5:
-            return +0.05  # Raise threshold (be selective)
-        
-        # Normal market
-        else:
-            return 0.0
-    
-    
-    def _get_volatility_adjustment(self, avg_atr):
-        """
-        Adjust based on market volatility
-        High volatility = stricter (avoid whipsaws)
-        Low volatility = looser (need to trade)
-        """
-        if avg_atr < 0.01:  # Very low volatility (<1%)
-            return -0.10  # Much lower threshold
-        
-        elif avg_atr < 0.015:  # Low volatility (<1.5%)
-            return -0.05  # Lower threshold
-        
-        elif avg_atr > 0.035:  # High volatility (>3.5%)
-            return +0.05  # Raise threshold
-        
-        elif avg_atr > 0.05:  # Very high volatility (>5%)
-            return +0.10  # Much stricter
-        
-        else:  # Normal volatility (1.5-3.5%)
-            return 0.0
-    
-    
-    def get_simple_adaptive_confidence(self, hour=None):
-        """
-        Simple time-based adaptive threshold
-        Use this if you don't have win_rate/signals data yet
-        """
-        import datetime
+    def get_adaptive_confidence_with_signals(self, 
+                                            win_rate=None, 
+                                            market_volatility=None,
+                                            hour=None):
+        """Enhanced version including tracked signals"""
+        base_threshold = self._calc_confidence(self._current_capital)
+        adjustments = []
         
         if hour is None:
-            hour = datetime.datetime.now().hour
+            hour = datetime.now().hour
+        
+        time_adj = self._get_time_based_adjustment(hour)
+        adjustments.append(("time", time_adj))
+        
+        if win_rate is not None:
+            wr_adj = self._get_winrate_adjustment(win_rate)
+            adjustments.append(("winrate", wr_adj))
+        
+        if market_volatility is not None:
+            vol_adj = self._get_volatility_adjustment(market_volatility)
+            adjustments.append(("volatility", vol_adj))
+        
+        signal_count = self.get_recent_signal_count()
+        signal_adj = self._get_signal_count_adjustment(signal_count)
+        adjustments.append(("signals", signal_adj))
+        
+        final_threshold = base_threshold
+        for name, adj in adjustments:
+            final_threshold += adj
+        
+        final_threshold = max(0.45, min(0.80, final_threshold))
+        
+        if abs(final_threshold - base_threshold) > 0.05:
+            print(f"\nFULL ADAPTIVE THRESHOLD (with Signal Tracking)")
+            print(f"   Base: {base_threshold:.1%} → Adjusted: {final_threshold:.1%}")
+            for name, adj in adjustments:
+                if abs(adj) > 0.01:
+                    direction = "↑" if adj > 0 else "↓"
+                    print(f"   {direction} {name.capitalize()}: {adj:+.1%}")
+        
+        return final_threshold
+    
+    def get_simple_adaptive_confidence(self, hour=None):
+        """Simple time-based threshold (IMMEDIATE USE)"""
+        if hour is None:
+            hour = datetime.now().hour
         
         base = self._calc_confidence(self._current_capital)
         time_adj = self._get_time_based_adjustment(hour)
@@ -345,125 +607,20 @@ class DynamicConfig:
         
         return final
     
-    
     def should_use_adaptive_threshold(self):
-        """
-        Determine if adaptive thresholds should be used
-        Based on capital tier and feature flags
-        """
-        # Always use for medium tier and above
-        if self._current_capital >= 1000:
-            return True
-        
-        # Use for small tier if enabled
-        if self._current_capital >= 500:
-            return True
-        
-        # Micro tier: optional
+        """Determine if adaptive thresholds should be used"""
         return self._current_capital >= 300
-
-    def _calc_quality(self, cap):
-        """INCREASED: Higher quality signals only"""
-        if cap < 300: return 40
-        elif cap < 500: return 45
-        elif cap <= 1000: return 50
-        elif cap < 2000: return 55
-        elif cap < 5000: return 60
-        else: return 65
-    
-    def _calc_rsi(self, cap):
-        if cap < 300: return 38
-        elif cap < 500: return 36
-        elif cap <= 1000: return 35
-        elif cap < 5000: return 33
-        else: return 30
-    
-    def _calc_losses(self, cap):
-        """REDUCED: Faster cooldown after losses"""
-        if cap < 500: return 2
-        elif cap <= 1000: return 3
-        elif cap < 2000: return 4
-        else: return 5
-    
-    def _calc_cooldown(self, cap):
-        if cap < 300: return 0.5
-        elif cap < 500: return 0.75
-        elif cap <= 1000: return 1.0
-        elif cap < 5000: return 1.5
-        else: return 2.0
-    
-    def _calc_winrate(self, cap):
-        """LOWERED: More realistic minimum win rate"""
-        if cap < 300: return 0.25
-        elif cap < 500: return 0.28
-        elif cap <= 1000: return 0.30
-        elif cap < 5000: return 0.33
-        else: return 0.35
-    
-    def _calc_emergency(self, cap):
-        if cap < 300: return 0.15
-        elif cap < 500: return 0.14
-        elif cap <= 1000: return 0.12
-        elif cap < 5000: return 0.10
-        else: return 0.08
-    
-    def _calc_pause(self, cap):
-        if cap < 300: return 1
-        elif cap < 500: return 2
-        elif cap <= 1000: return 3
-        elif cap < 5000: return 4
-        else: return 6
-    
-    def _calc_slippage(self, cap):
-        if cap < 300: return 0.0008
-        elif cap < 500: return 0.0007
-        elif cap <= 1000: return 0.0006
-        elif cap < 5000: return 0.0004
-        else: return 0.0003
-    
-    def _calc_scan_offset(self, cap):
-        if cap < 300: return 8
-        elif cap < 500: return 10
-        elif cap <= 1000: return 12
-        elif cap < 5000: return 15
-        else: return 20
-    
-    def _calc_scan_int(self, cap):
-        if cap < 300: return 15
-        elif cap < 500: return 18
-        elif cap <= 1000: return 20
-        elif cap < 5000: return 25
-        else: return 30
-    
-    def _calc_multipliers(self, cap):
-        """ADJUSTED: Better position sizing multipliers"""
-        if cap < 500: return 1.25, 0.75
-        elif cap <= 1000: return 1.20, 0.80
-        elif cap < 5000: return 1.15, 0.85
-        else: return 1.10, 0.90
-    
-    def _calc_grade(self, cap):
-        if cap < 250: return 'D'
-        elif cap <= 1000: return 'C'
-        elif cap < 5000: return 'B'
-        else: return 'A'
-    
-    def _calc_ml_trades(self, cap):
-        if cap < 500: return 4
-        elif cap <= 1000: return 6
-        elif cap < 5000: return 8
-        else: return 10
     
     
     # ===================================================================
-    # UPDATE ALL PARAMETERS (COMPLETE v6.2 CONFIG)
+    # UPDATE ALL PARAMETERS
     # ===================================================================
     
     def _update_all_params(self):
         """Recalculate ALL parameters based on current capital"""
         cap = self._current_capital
         
-        # Core capital tracking
+        # Core tracking
         self.CURRENT_CAPITAL = cap
         self.STARTING_CAPITAL = self._starting_capital
         self.INITIAL_CAPITAL = self._starting_capital
@@ -625,12 +782,10 @@ class DynamicConfig:
         # ===================================================================
         self.USE_ROTATING_WATCHLISTS = True
         self.WATCHLIST_BEAR = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']
-        
         self.WATCHLIST_CORE = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT']
         self.WATCHLIST_EXTENDED = ['AVAX/USDT', 'MATIC/USDT', 'DOT/USDT', 'LINK/USDT', 'ATOM/USDT', 'UNI/USDT', 'ARB/USDT', 'OP/USDT']
         self.WATCHLIST_AGGRESSIVE = ['LTC/USDT', 'DOGE/USDT', 'INJ/USDT', 'SUI/USDT', 'FET/USDT', 'NEAR/USDT', 'TIA/USDT']
         
-        # Build watchlist based on tier
         tier = self._get_tier(cap)
         if tier == 'micro':
             self.WATCHLIST_A, self.WATCHLIST_B, self.WATCHLIST_C = self.WATCHLIST_CORE[:4], self.WATCHLIST_EXTENDED[:4], []
@@ -645,23 +800,23 @@ class DynamicConfig:
         self.GROUP_SCAN_OFFSET = self._calc_scan_offset(cap)
         
         # ===================================================================
-        # ML & ONLINE LEARNING
+        # ML & ONLINE LEARNING - FULLY ENABLED
         # ===================================================================
-        self.ENABLE_ONLINE_LEARNING = cap > 2000
-        self.ML_ENABLED = cap > 500
-        self.ML_MODEL_TO_USE = 'ensemble' if cap > 1000 else 'random_forest'
+        self.ENABLE_ONLINE_LEARNING = True
+        self.ML_ENABLED = True
+        self.ML_MODEL_TO_USE = 'ensemble'
         self.ML_CONFIDENCE_THRESHOLD = self.SIGNAL_CONFIDENCE_THRESHOLD
-        self.ML_SIGNAL_WEIGHT = 0.35 if self.ML_ENABLED else 0.0
+        self.ML_SIGNAL_WEIGHT = 0.40
         self.BEARISH_CONFIDENCE_BOOST = 0.10
         
-        self.ENABLE_ENSEMBLE_ML = cap > 1000
-        self.ENSEMBLE_MODELS = ['random_forest', 'lightgbm', 'xgboost'] if self.ENABLE_ENSEMBLE_ML else ['random_forest']
+        self.ENABLE_ENSEMBLE_ML = True
+        self.ENSEMBLE_MODELS = ['random_forest', 'lightgbm', 'xgboost']
         self.ENSEMBLE_WEIGHTS = {'rf': 0.35, 'lgb': 0.35, 'xgb': 0.30}
         
         self.ONLINE_LEARNING_METHOD = 'sgd'
         self.UPDATE_MODEL_PER_TRADE = True
-        self.MIN_TRADES_BEFORE_UPDATE = self._calc_ml_trades(cap)
-        self.BATCH_UPDATE_SIZE = self.MIN_TRADES_BEFORE_UPDATE * 2
+        self.MIN_TRADES_BEFORE_UPDATE = 4
+        self.BATCH_UPDATE_SIZE = 8
         self.ONLINE_LEARNING_RATE = 0.01
         self.MOMENTUM = 0.9
         self.DECAY_RATE = 0.95
@@ -672,8 +827,8 @@ class DynamicConfig:
         self.VALIDATION_WINDOW = 20
         self.ML_RETRAIN_INTERVAL = 100
         self.ML_MIN_SAMPLES = 50
-        self.ML_FEATURE_SET = 'enhanced' if cap > 2000 else 'basic'
-        self.USE_FEATURE_ENGINEERING = cap > 1000
+        self.ML_FEATURE_SET = 'enhanced'
+        self.USE_FEATURE_ENGINEERING = True
         
         # ===================================================================
         # SENTIMENT ANALYSIS
@@ -701,6 +856,17 @@ class DynamicConfig:
         self.MIN_SIGNAL_QUALITY_GRADE = self._calc_grade(cap)
         
         # ===================================================================
+        # SIGNAL TRACKING & FILTERING
+        # ===================================================================
+        self.ENABLE_SIGNAL_TRACKING = True
+        self.SIGNAL_SURGE_WINDOW_SECS = 60
+        self.SIGNAL_SURGE_THRESHOLD = 3
+        self.AUTO_ADJUST_THRESHOLD_ON_SURGE = True
+        self.THRESHOLD_INCREASE_PER_SIGNAL = 0.05
+        self.MAX_THRESHOLD_ON_SURGE = 0.80
+        self.MIN_THRESHOLD_BASE = 0.45
+        
+        # ===================================================================
         # TIMING
         # ===================================================================
         self.SCAN_INTERVAL = self._calc_scan_int(cap)
@@ -723,7 +889,7 @@ class DynamicConfig:
         self.BACKTEST_RESULTS_FILE = "data/backtest_results.csv"
         self.LOG_SIGNAL_DETAILS = cap < 1000
         self.LOG_SENTIMENT_SCORES = False
-        self.LOG_ML_PREDICTIONS = self.ML_ENABLED
+        self.LOG_ML_PREDICTIONS = True
         
         # ===================================================================
         # MONITORING
@@ -789,6 +955,8 @@ class DynamicConfig:
             'volatility_adjustment': self.ENABLE_VOLATILITY_ADJUSTMENT,
             'quality_filter': self.ENABLE_QUALITY_FILTER,
             'adaptive_sizing': True,
+            'adaptive_threshold': True,
+            'signal_tracking': True,
         }
         
         # ===================================================================
@@ -806,7 +974,7 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # PROPERTIES & HELPER METHODS
+    # PROPERTIES & HELPERS
     # ===================================================================
     
     @property
@@ -819,7 +987,7 @@ class DynamicConfig:
         return self._get_tier(self._current_capital)
     
     def validate_capital_settings(self):
-        """Validate settings (v6.2 compatible)"""
+        """Validate all settings"""
         cap = self.CURRENT_CAPITAL
         pos = self.MAX_OPEN_POSITIONS
         pct = self.MAX_POSITION_PCT
@@ -851,19 +1019,19 @@ class DynamicConfig:
             for w in warnings:
                 print(f"   {w}")
         else:
-            print("All validated!")
+            print("All settings validated!")
         
         print(f"{'='*70}\n")
         return len(warnings) == 0
     
     def print_capital_summary(self):
-        """Print summary (v6.2 compatible + dynamic enhancements)"""
+        """Print config summary"""
         tier = self.get_capital_tier()
         pnl = self.total_pnl_pct
         pnl_indicator = "PROFIT" if pnl >= 0 else "LOSS"
         
         print(f"\n{'='*70}")
-        print(f"DYNAMIC CONFIG v6.3-FIXED - Tier: {tier.upper()}")
+        print(f"DYNAMIC CONFIG v6.4.1 - Tier: {tier.upper()}")
         print(f"{'='*70}")
         print(f"Starting Capital: ${self.STARTING_CAPITAL:.2f}")
         print(f"Current Capital: ${self.CURRENT_CAPITAL:.2f} ({pnl:+.2f}% {pnl_indicator})")
@@ -874,74 +1042,66 @@ class DynamicConfig:
         print(f"Stop Loss: {self.MAX_SL_PCT*100:.2f}% | ATR SL: {self.ATR_SL_MULT:.1f}x")
         print(f"Take Profit: {self.MAX_TP_PCT*100:.2f}% | ATR TP: {self.ATR_TP_MULT:.1f}x")
         print(f"Trailing: Activate at {self.TRAIL_ACTIVATE_ATR_MULT:.1f}x ATR")
-        print(f"Partial TP: {'ENABLED' if self.ENABLE_PARTIAL_TP else 'DISABLED'} @ {self.PARTIAL_TP_TRIGGER_ATR_MULT:.1f}x ATR")
-        print(f"Max Position Hold: {self.MAX_POSITION_HOURS}h")
-        print(f"Min Win Rate: {self.MIN_WIN_RATE_TO_TRADE*100:.0f}%")
+        print(f"Partial TP: ENABLED @ {self.PARTIAL_TP_TRIGGER_ATR_MULT:.1f}x ATR")
         print(f"Watchlist: {len(self.WATCHLIST)} coins | Scan: {self.SCAN_INTERVAL}s")
-        print(f"ML: {self.ML_ENABLED} | Sentiment: {self.ENABLE_SENTIMENT_ANALYSIS} | Bounce: {self.ENABLE_BOUNCE_TRADING}")
-        print(f"Last Update: {self._last_update.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"\nKEY FEATURES:")
-        print(f"   DYNAMIC capital-based adjustment")
-        print(f"   FIXED tier boundaries ($1000 = MEDIUM)")
-        print(f"   Proper position counts (3 @ $1000, not 5!)")
-        print(f"   Wider stop losses (avoid premature exits)")
-        print(f"   Realistic take profits (achievable targets)")
-        print(f"   Partial TP always enabled (lock in gains)")
-        print(f"   Better trailing stops (capture trends)")
-        print(f"   Higher signal quality threshold (better entries)")
+        print(f"\nML Status:")
+        print(f"  ML Enabled: True")
+        print(f"  Ensemble ML: True")
+        print(f"  Models: {', '.join(self.ENSEMBLE_MODELS)}")
+        print(f"  ML Signal Weight: {self.ML_SIGNAL_WEIGHT*100:.0f}%")
+        print(f"\nAdaptive Features:")
+        print(f"  Time-based Threshold: Enabled")
+        print(f"  Win-rate Adjustment: Enabled")
+        print(f"  Volatility Adjustment: Enabled")
+        print(f"  Signal Tracking: Enabled (surge detection at {self.SIGNAL_SURGE_THRESHOLD}+ signals)")
+        print(f"  Auto Threshold Adjustment: Enabled")
+        print(f"\nLast Update: {self._last_update.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*70}\n")
     
     def print_summary(self):
-        """Alias for print_capital_summary (backward compatible)"""
+        """Alias for backward compatibility"""
         self.print_capital_summary()
 
 
-# Backward compatibility: Allow import as Config
+# Backward compatibility
 Config = DynamicConfig
 
 
-# Usage Example & Testing
+# Testing & Validation
 if __name__ == "__main__":
     print("="*70)
-    print("DYNAMIC CONFIG v6.3-FIXED - TESTING")
+    print("DYNAMIC CONFIG v6.4.1 - COMPLETE TESTING")
     print("="*70)
     
-    # Initialize with starting capital
+    # Initialize
     config = DynamicConfig(starting_capital=1000)
     config.print_summary()
     config.validate_capital_settings()
     
-    # Test access to parameters
-    print("\n" + "="*70)
-    print("PARAMETER ACCESS TEST")
-    print("="*70)
-    print(f"Current max positions: {config.MAX_OPEN_POSITIONS}")
-    print(f"Current position %: {config.MAX_POSITION_PCT*100:.1f}%")
-    print(f"Current allocation: {config.MAX_OPEN_POSITIONS * config.MAX_POSITION_PCT * 100:.0f}%")
-    print(f"Current tier: {config.CAPITAL_TIER}")
-    print(f"ML Enabled: {config.ML_ENABLED}")
-    print(f"Watchlist size: {len(config.WATCHLIST)}")
-        # Test adaptive thresholds
+    # Test adaptive thresholds
     print("\n" + "="*70)
     print("ADAPTIVE THRESHOLD TESTING")
     print("="*70)
     
-    # Test with no data (time-based only)
+    # Test 1: Simple time-based
     simple_threshold = config.get_simple_adaptive_confidence()
-    print(f"Simple adaptive (current hour): {simple_threshold:.1%}")
+    print(f"\nSimple adaptive (current hour): {simple_threshold:.1%}")
     
-    # Test with full data
-    test_signals = [0.45, 0.48, 0.52, 0.49, 0.51, 0.47, 0.50, 0.46]
-    adaptive_threshold = config.get_adaptive_confidence(
-        win_rate=55,
-        recent_signals=test_signals,
-        market_volatility=0.018,
-        hour=22  # 10 PM
-    )
-    print(f"Full adaptive threshold: {adaptive_threshold:.1%}")
+    # Test 2: Full adaptive
+    test_signals = [
+        (datetime.now(), 0.52, "MATIC/USDT"),
+        (datetime.now(), 0.48, "DOT/USDT"),
+        (datetime.now(), 0.51, "LINK/USDT"),
+    ]
     
-    # Test at different hours
+    for sig in test_signals:
+        config.track_buy_signal(sig[1], sig[2])
+    
+    adaptive = config.get_adaptive_confidence_with_signals(win_rate=55, market_volatility=0.018, hour=2)
+    print(f"Full adaptive (with 3 signals): {adaptive:.1%}")
+    
+    # Test 3: Threshold by hour
     print("\nThreshold by hour:")
-    for h in [6, 10, 14, 18, 22, 2]:
+    for h in [2, 6, 10, 14, 18, 22]:
         t = config.get_simple_adaptive_confidence(hour=h)
-        print(f"  {h:2d}:00 → {t:.1%}")
+        print(f"  {h:2d}:00 IST → {t:.1%}")
