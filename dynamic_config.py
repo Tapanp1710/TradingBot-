@@ -1,10 +1,15 @@
 """
-Dynamic Trading Bot Configuration v6.4.1 - FULLY ADAPTIVE WITH SIGNAL TRACKING
-November 7, 2025 - Complete production-ready configuration
+Dynamic Trading Bot Configuration v6.5.0 - ENHANCED WITH ADVANCED FEATURES
+November 9, 2025 - Production-ready with all improvements
 - Capital-based adjustments
 - Adaptive confidence thresholds (time, win-rate, volatility, signals)
 - ML enabled for all accounts > $500
 - Signal surge detection and filtering
+- SHORT SELLING capability (margin trading)
+- Multi-timeframe confirmation
+- Market regime detection and swing mode
+- Contrarian signal detection
+- Idle capital rebalancing
 """
 import os
 from datetime import datetime, timedelta
@@ -13,13 +18,18 @@ import pytz
 
 class DynamicConfig:
     """
-    Production-ready configuration with:
+    Production-ready configuration with ALL advanced features:
     - Capital-based dynamic adjustments
     - Real-time adaptive thresholds (4 strategies)
     - ML ensemble enabled (Random Forest + LightGBM + XGBoost)
     - Signal tracking and surge filtering
     - Win-rate adjustments
     - Market volatility sensing
+    - SHORT SELLING (NEW)
+    - Multi-timeframe analysis (NEW)
+    - Market regime detection (NEW)
+    - Contrarian signals (NEW)
+    - Idle capital rebalancing (NEW)
     """
     
     def __init__(self, starting_capital=None):
@@ -33,9 +43,17 @@ class DynamicConfig:
         self._signal_check_window_secs = 60
         self._signal_history_limit = 50
         
+        # NEW: Market regime tracking
+        self._atr_history = []
+        self._current_regime = 'NORMAL'
+        
+        # NEW: Idle capital tracking
+        self._last_trade_time = datetime.now()
+        self._scans_without_signal = 0
+        
         # Static values
-        self.BOT_VERSION = "6.4.1"
-        self.CONFIG_VERSION = "6.4.1-ADAPTIVE-WITH-SIGNALS"
+        self.BOT_VERSION = "6.5.0"
+        self.CONFIG_VERSION = "6.5.0-ENHANCED"
         self.EXCHANGE = "binance"
         self.API_KEY = os.getenv('EXCHANGE_API_KEY', '')
         self.API_SECRET = os.getenv('EXCHANGE_API_SECRET', '')
@@ -76,7 +94,7 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # TIER & CALCULATION HELPERS
+    # TIER & CALCULATION HELPERS (UNCHANGED)
     # ===================================================================
     
     def _get_tier(self, cap):
@@ -405,7 +423,7 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # SIGNAL TRACKING & FILTERING
+    # SIGNAL TRACKING & FILTERING (UNCHANGED)
     # ===================================================================
     
     def track_buy_signal(self, confidence, symbol):
@@ -419,6 +437,9 @@ class DynamicConfig:
         recent_count = self.get_recent_signal_count()
         if recent_count >= 3:
             print(f"SIGNAL SURGE: {recent_count} signals in {self._signal_check_window_secs}s - Threshold will increase")
+        
+        # Reset scans counter
+        self._scans_without_signal = 0
     
     def get_recent_signal_count(self, window_secs=None):
         """Count BUY signals in recent window"""
@@ -454,7 +475,160 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # ADAPTIVE CONFIDENCE THRESHOLD - ALL 4 STRATEGIES
+    # NEW: MARKET REGIME DETECTION
+    # ===================================================================
+    
+    def update_atr_history(self, symbol, atr_value):
+        """Track ATR values for regime detection"""
+        self._atr_history.append({
+            'timestamp': datetime.now(),
+            'symbol': symbol,
+            'atr': atr_value
+        })
+        
+        # Keep last 50 readings
+        if len(self._atr_history) > 50:
+            self._atr_history.pop(0)
+    
+    def get_market_regime(self):
+        """
+        Determine current market regime based on ATR
+        Returns: 'VOLATILE', 'FLAT', or 'NORMAL'
+        """
+        if len(self._atr_history) < 10:
+            return 'NORMAL'
+        
+        # Calculate average ATR
+        recent_atrs = [entry['atr'] for entry in self._atr_history[-20:]]
+        avg_atr = sum(recent_atrs) / len(recent_atrs)
+        
+        # Classify regime
+        if avg_atr > 0.025:  # 2.5%+
+            new_regime = 'VOLATILE'
+        elif avg_atr < 0.008:  # 0.8%-
+            new_regime = 'FLAT'
+        else:
+            new_regime = 'NORMAL'
+        
+        # Track regime changes
+        if self._current_regime != new_regime:
+            old_regime = self._current_regime
+            self._current_regime = new_regime
+            print(f"\n🔔 MARKET REGIME CHANGE: {old_regime} → {new_regime}")
+            print(f"   Avg ATR: {avg_atr*100:.2f}%")
+            self._print_regime_strategy(new_regime)
+        
+        return self._current_regime
+    
+    def _print_regime_strategy(self, regime):
+        """Print strategy adjustments for regime"""
+        if regime == 'VOLATILE':
+            print("   📈 SCALP MODE ACTIVATED:")
+            print("   - Quick entries/exits (2-5 min holds)")
+            print("   - Tight stops (2-3%)")
+            print("   - Small TPs (2-3%)")
+        elif regime == 'FLAT':
+            print("   📊 SWING MODE ACTIVATED:")
+            print("   - Patient entries")
+            print("   - Wide stops (4-5%)")
+            print("   - Large TPs (5-7%)")
+            print("   - Reduced frequency")
+        else:
+            print("   ⚖️ NORMAL MODE:")
+            print("   - Balanced approach")
+    
+    def get_regime_adjusted_params(self):
+        """Get trading parameters adjusted for current regime"""
+        regime = self.get_market_regime()
+        
+        if regime == 'VOLATILE':
+            return {
+                'stop_loss_mult': 1.5,
+                'take_profit_mult': 1.3,
+                'confidence_threshold': 0.60,
+                'max_hold_hours': 6,
+                'position_size_mult': 1.0
+            }
+        elif regime == 'FLAT':
+            return {
+                'stop_loss_mult': 2.5,
+                'take_profit_mult': 2.5,
+                'confidence_threshold': 0.65,
+                'max_hold_hours': 72,
+                'position_size_mult': 0.8
+            }
+        else:  # NORMAL
+            return {
+                'stop_loss_mult': 1.7,
+                'take_profit_mult': 1.3,
+                'confidence_threshold': 0.60,
+                'max_hold_hours': 36,
+                'position_size_mult': 1.0
+            }
+    
+    
+    # ===================================================================
+    # NEW: IDLE CAPITAL REBALANCING
+    # ===================================================================
+    
+    def record_trade_executed(self):
+        """Call this when a trade is executed"""
+        self._last_trade_time = datetime.now()
+        self._scans_without_signal = 0
+    
+    def increment_scans_without_signal(self):
+        """Call this after each scan with no signal"""
+        self._scans_without_signal += 1
+    
+    def get_hours_since_last_trade(self):
+        """Get hours since last trade"""
+        return (datetime.now() - self._last_trade_time).total_seconds() / 3600
+    
+    def get_adjusted_threshold_for_idle(self):
+        """
+        Lower confidence threshold during extended idle periods
+        """
+        hours_idle = self.get_hours_since_last_trade()
+        base_threshold = self.SIGNAL_CONFIDENCE_THRESHOLD
+        
+        # No adjustment if recently traded
+        if hours_idle < 2:
+            return base_threshold
+        
+        # Progressive lowering
+        if hours_idle > 6:
+            reduction = 0.10
+        elif hours_idle > 4:
+            reduction = 0.08
+        else:
+            reduction = 0.05
+        
+        relaxed = base_threshold - reduction
+        relaxed = max(0.50, relaxed)  # Never below 50%
+        
+        if relaxed < base_threshold:
+            print(f"💡 IDLE CAPITAL ADJUSTMENT: Threshold lowered to {relaxed:.1%} (idle {hours_idle:.1f}h)")
+        
+        return relaxed
+    
+    def should_force_deployment(self):
+        """Determine if forced trade deployment needed"""
+        hours_idle = self.get_hours_since_last_trade()
+        
+        # Never force before 3 hours
+        if hours_idle < 3:
+            return False
+        
+        # Force if idle for 3+ hours
+        if hours_idle >= 3:
+            print(f"\n⚡ FORCE DEPLOYMENT TRIGGERED (idle {hours_idle:.1f}h)")
+            return True
+        
+        return False
+    
+    
+    # ===================================================================
+    # ADAPTIVE CONFIDENCE THRESHOLD (UNCHANGED)
     # ===================================================================
     
     def _get_time_based_adjustment(self, hour):
@@ -652,6 +826,17 @@ class DynamicConfig:
         self.ENABLE_VOLATILITY_ADJUSTMENT = cap > 3000
         
         # ===================================================================
+        # NEW: SHORT SELLING
+        # ===================================================================
+        self.ENABLE_SHORT_SELLING = cap > 3000  # Only for larger accounts
+        self.SHORT_POSITION_PCT = 0.5  # Shorts are 50% size of longs
+        self.SHORT_MAX_POSITIONS = 2 if cap > 3000 else 0
+        self.SHORT_CONFIDENCE_THRESHOLD = 0.65  # Higher threshold for shorts
+        self.SHORT_MAX_LEVERAGE = 2  # 2x max leverage
+        self.SHORT_SL_MULT = 1.3  # Tighter stops for shorts
+        self.SHORT_TP_MULT = 1.0  # Faster profit taking
+        
+        # ===================================================================
         # MULTI-EXCHANGE
         # ===================================================================
         self.ENABLE_MULTI_EXCHANGE = cap > 5000
@@ -713,11 +898,12 @@ class DynamicConfig:
         self.MAX_DAILY_LOSS_AMOUNT = int(cap * self.MAX_DAILY_LOSS_PCT)
         
         # ===================================================================
-        # MULTI-TIMEFRAME
+        # NEW: MULTI-TIMEFRAME (Always enabled now)
         # ===================================================================
-        self.ENABLE_MULTI_TIMEFRAME = cap > 3000
-        self.TIMEFRAMES = ['1h', '4h'] if self.ENABLE_MULTI_TIMEFRAME else ['1h']
-        self.TIMEFRAME_WEIGHTS = [0.6, 0.4] if self.ENABLE_MULTI_TIMEFRAME else [1.0]
+        self.ENABLE_MULTI_TIMEFRAME = True  # Always on
+        self.TIMEFRAMES = ['1h', '4h', '1d']
+        self.TIMEFRAME_WEIGHTS = [0.5, 0.3, 0.2]
+        self.REQUIRE_TIMEFRAME_ALIGNMENT = cap > 1000  # Strict alignment for larger accounts
         
         # ===================================================================
         # SIGNAL SETTINGS
@@ -740,6 +926,15 @@ class DynamicConfig:
         # Bollinger Bands
         self.BB_PERIOD = 20
         self.BB_STD = 2
+        
+        # ===================================================================
+        # NEW: CONTRARIAN SIGNALS
+        # ===================================================================
+        self.ENABLE_CONTRARIAN_SIGNALS = cap > 1000
+        self.CONTRARIAN_SELL_THRESHOLD = 0.80  # 80%+ coins showing SELL
+        self.CONTRARIAN_BUY_THRESHOLD = 0.80   # 80%+ coins showing BUY
+        self.CONTRARIAN_CONFIDENCE = 0.58      # Lower confidence for contrarian
+        self.CONTRARIAN_POSITION_SIZE_MULT = 0.7  # Smaller positions
         
         # ===================================================================
         # LOSS STREAK DETECTION
@@ -957,6 +1152,10 @@ class DynamicConfig:
             'adaptive_sizing': True,
             'adaptive_threshold': True,
             'signal_tracking': True,
+            'short_selling': self.ENABLE_SHORT_SELLING,  # NEW
+            'contrarian_signals': self.ENABLE_CONTRARIAN_SIGNALS,  # NEW
+            'regime_detection': True,  # NEW
+            'idle_rebalancing': True,  # NEW
         }
         
         # ===================================================================
@@ -974,7 +1173,7 @@ class DynamicConfig:
     
     
     # ===================================================================
-    # PROPERTIES & HELPERS
+    # PROPERTIES & HELPERS (UNCHANGED)
     # ===================================================================
     
     @property
@@ -1031,7 +1230,7 @@ class DynamicConfig:
         pnl_indicator = "PROFIT" if pnl >= 0 else "LOSS"
         
         print(f"\n{'='*70}")
-        print(f"DYNAMIC CONFIG v6.4.1 - Tier: {tier.upper()}")
+        print(f"DYNAMIC CONFIG v6.5.0 - Tier: {tier.upper()}")
         print(f"{'='*70}")
         print(f"Starting Capital: ${self.STARTING_CAPITAL:.2f}")
         print(f"Current Capital: ${self.CURRENT_CAPITAL:.2f} ({pnl:+.2f}% {pnl_indicator})")
@@ -1049,6 +1248,12 @@ class DynamicConfig:
         print(f"  Ensemble ML: True")
         print(f"  Models: {', '.join(self.ENSEMBLE_MODELS)}")
         print(f"  ML Signal Weight: {self.ML_SIGNAL_WEIGHT*100:.0f}%")
+        print(f"\nNEW Features (v6.5):")
+        print(f"  Short Selling: {'Enabled' if self.ENABLE_SHORT_SELLING else 'Disabled'} (capital > $3000)")
+        print(f"  Multi-Timeframe: Always Enabled ({len(self.TIMEFRAMES)} timeframes)")
+        print(f"  Market Regime: {self._current_regime}")
+        print(f"  Contrarian Signals: {'Enabled' if self.ENABLE_CONTRARIAN_SIGNALS else 'Disabled'}")
+        print(f"  Idle Rebalancing: Active")
         print(f"\nAdaptive Features:")
         print(f"  Time-based Threshold: Enabled")
         print(f"  Win-rate Adjustment: Enabled")
@@ -1070,7 +1275,7 @@ Config = DynamicConfig
 # Testing & Validation
 if __name__ == "__main__":
     print("="*70)
-    print("DYNAMIC CONFIG v6.4.1 - COMPLETE TESTING")
+    print("DYNAMIC CONFIG v6.5.0 - COMPLETE TESTING")
     print("="*70)
     
     # Initialize
@@ -1078,30 +1283,25 @@ if __name__ == "__main__":
     config.print_summary()
     config.validate_capital_settings()
     
-    # Test adaptive thresholds
+    # Test new features
     print("\n" + "="*70)
-    print("ADAPTIVE THRESHOLD TESTING")
+    print("NEW FEATURES TESTING")
     print("="*70)
     
-    # Test 1: Simple time-based
+    # Test regime detection
+    config.update_atr_history("BTC/USDT", 0.005)
+    config.update_atr_history("ETH/USDT", 0.006)
+    regime = config.get_market_regime()
+    print(f"\nCurrent Regime: {regime}")
+    
+    # Test regime-adjusted params
+    params = config.get_regime_adjusted_params()
+    print(f"Regime Params: {params}")
+    
+    # Test idle rebalancing
+    print(f"\nHours Idle: {config.get_hours_since_last_trade():.2f}")
+    print(f"Should Force: {config.should_force_deployment()}")
+    
+    # Test adaptive thresholds
     simple_threshold = config.get_simple_adaptive_confidence()
     print(f"\nSimple adaptive (current hour): {simple_threshold:.1%}")
-    
-    # Test 2: Full adaptive
-    test_signals = [
-        (datetime.now(), 0.52, "MATIC/USDT"),
-        (datetime.now(), 0.48, "DOT/USDT"),
-        (datetime.now(), 0.51, "LINK/USDT"),
-    ]
-    
-    for sig in test_signals:
-        config.track_buy_signal(sig[1], sig[2])
-    
-    adaptive = config.get_adaptive_confidence_with_signals(win_rate=55, market_volatility=0.018, hour=2)
-    print(f"Full adaptive (with 3 signals): {adaptive:.1%}")
-    
-    # Test 3: Threshold by hour
-    print("\nThreshold by hour:")
-    for h in [2, 6, 10, 14, 18, 22]:
-        t = config.get_simple_adaptive_confidence(hour=h)
-        print(f"  {h:2d}:00 IST → {t:.1%}")
